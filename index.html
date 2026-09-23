@@ -1,0 +1,1903 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Umerang Lab — Event Tracking Test Site</title>
+<meta name="description" content="Test site that fires every browser-side event in the Umerang Metrics & Events Catalog to the Umerang collector, with a live log of what was sent.">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%236c63ff'/%3E%3Cpath d='M9 22 16 9l7 13' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+  /* Event tap. Records every batch the Umerang collector sends so the page can show it.
+     Must run before the collector loads. It only reads requests; it never changes them. */
+  (function () {
+    var tap = window.__ulabTap = { batches: [], listeners: [] };
+    function emit(batch) {
+      tap.batches.push(batch);
+      for (var i = 0; i < tap.listeners.length; i++) {
+        try { tap.listeners[i](batch); } catch (e) {}
+      }
+    }
+    function isIngest(url) { return /\/publiccdp\/ingest/i.test(String(url || '')); }
+    function header(h, name) {
+      if (!h) return '';
+      if (typeof h.get === 'function') return h.get(name) || '';
+      for (var k in h) if (k.toLowerCase() === name) return String(h[k]);
+      return '';
+    }
+    function readBody(body, gzip) {
+      if (body == null) return Promise.resolve('');
+      if (typeof body === 'string') return Promise.resolve(body);
+      var blob = body instanceof Blob ? body : new Blob([body]);
+      if (gzip && typeof DecompressionStream === 'function') {
+        return new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text();
+      }
+      return blob.text();
+    }
+    if (window.fetch) {
+      var realFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var result = realFetch.apply(this, arguments);
+        try {
+          var url = typeof input === 'string' ? input : (input && input.url) || '';
+          if (isIngest(url) && init && init.body != null) {
+            var text = readBody(init.body, /gzip/i.test(header(init.headers, 'content-encoding')));
+            result
+              .then(function (res) { return { status: res.status, ok: res.ok }; },
+                    function () { return { status: 0, ok: false }; })
+              .then(function (st) {
+                return text.then(function (t) { emit({ via: 'fetch', status: st.status, ok: st.ok, text: t, at: Date.now() }); });
+              })
+              .catch(function () {});
+          }
+        } catch (e) {}
+        return result;
+      };
+    }
+    if (navigator.sendBeacon) {
+      var realBeacon = navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = function (url, data) {
+        var queued = realBeacon(url, data);
+        try {
+          if (isIngest(url)) {
+            readBody(data, false).then(function (t) {
+              emit({ via: 'beacon', status: queued ? 'queued' : 'refused', ok: queued, text: t, at: Date.now() });
+            }).catch(function () {});
+          }
+        } catch (e) {}
+        return queued;
+      };
+    }
+  })();
+
+  /* Command queue in the format the collector replays on load: ['track', name, props] and ['identify', traits]. */
+  window.umerang = window.umerang || { q: [] };
+  window.umerang.track = window.umerang.track || function () { window.umerang.q.push(['track'].concat([].slice.call(arguments))); };
+  window.umerang.identify = window.umerang.identify || function () { window.umerang.q.push(['identify'].concat([].slice.call(arguments))); };
+</script>
+<script defer src="https://stage-app.clubeez.com/umerang_collector.js?v=1.1.0&amp;merchantId=UTA7F4D868" onerror="window.__ulabCollectorError = true"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0f;
+    --surface: #13131a;
+    --surface2: #1c1c28;
+    --surface3: #262638;
+    --accent: #6c63ff;
+    --accent-strong: #8f88ff;
+    --accent2: #ff6584;
+    --accent3: #43e97b;
+    --amber: #ffb547;
+    --text: #f0f0f8;
+    --muted: #9a9ab8;
+    --faint: #72728f;
+    --border: rgba(108, 99, 255, 0.18);
+    --border-strong: rgba(108, 99, 255, 0.38);
+    --glow: 0 0 32px rgba(108, 99, 255, 0.18);
+    --nav-h: 64px;
+    --font-display: "Syne", "DM Sans", system-ui, sans-serif;
+    --font-body: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  [hidden] { display: none !important; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-h) + 16px); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  a { color: var(--accent-strong); }
+  p { margin: 0; }
+  h1, h2, h3, h4 { margin: 0; font-family: var(--font-display); line-height: 1.1; letter-spacing: -0.02em; text-wrap: balance; }
+  code { font-family: var(--font-mono); font-size: 0.86em; color: var(--accent-strong); }
+  :focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 6px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  #scroll-bar {
+    position: fixed; top: 0; left: 0; z-index: 60; height: 3px; width: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.1s;
+  }
+
+  /* Top bar */
+  .topnav {
+    position: fixed; inset: 0 0 auto 0; z-index: 50; height: var(--nav-h);
+    display: flex; align-items: center; gap: 1.5rem; padding: 0 clamp(1rem, 3vw, 2.5rem);
+    background: rgba(10, 10, 15, 0.86); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-family: var(--font-display); font-weight: 800; font-size: 1.25rem; color: var(--text); text-decoration: none; white-space: nowrap; letter-spacing: -0.02em; }
+  .logo span { color: var(--accent); }
+  .nav-links { display: flex; gap: 1.3rem; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 500; white-space: nowrap; padding: 0.3rem 0; }
+  .nav-links a:hover { color: var(--text); }
+  .btn-log {
+    display: inline-flex; align-items: center; gap: 0.5rem; flex: none;
+    padding: 0.5rem 1rem; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+    font: 600 0.9rem var(--font-body); cursor: pointer; white-space: nowrap; transition: opacity 0.2s;
+  }
+  .btn-log:hover { opacity: 0.88; }
+  .badge { min-width: 1.6em; padding: 0 0.45em; border-radius: 99px; background: rgba(255, 255, 255, 0.22); font-size: 0.78rem; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* Hero */
+  .hero { position: relative; overflow: hidden; text-align: center; padding: calc(var(--nav-h) + 5rem) 1.5rem 3.5rem; }
+  .hero::before {
+    content: ""; position: absolute; top: -220px; left: 50%; transform: translateX(-50%);
+    width: 760px; height: 760px; max-width: 170vw;
+    background: radial-gradient(circle, rgba(108, 99, 255, 0.2) 0%, transparent 70%); pointer-events: none;
+  }
+  .status {
+    position: relative; display: inline-flex; align-items: center; gap: 0.55rem; max-width: 100%;
+    margin-bottom: 1.6rem; padding: 0.4rem 1rem; border-radius: 99px;
+    background: rgba(108, 99, 255, 0.12); border: 1px solid var(--border); color: var(--accent-strong);
+    font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .status .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .status.ok .dot { background: var(--accent3); animation: pulse 1.5s infinite; }
+  .status.warn { color: var(--amber); background: rgba(255, 181, 71, 0.08); border-color: rgba(255, 181, 71, 0.35); }
+  .status.warn .dot { background: var(--amber); }
+  .status.bad { color: var(--accent2); background: rgba(255, 101, 132, 0.08); border-color: rgba(255, 101, 132, 0.4); }
+  .status.bad .dot { background: var(--accent2); }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.4); } }
+  .hero h1 { position: relative; max-width: 13ch; margin: 0 auto 1.3rem; font-size: clamp(2.6rem, 6.5vw, 4.8rem); font-weight: 800; letter-spacing: -0.035em; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero-sub { position: relative; max-width: 580px; margin: 0 auto 2.2rem; color: var(--muted); font-size: 1.08rem; line-height: 1.7; }
+  .hero-btns { position: relative; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    padding: 0.8rem 1.6rem; border: 1px solid transparent; border-radius: 10px;
+    font: 700 0.98rem var(--font-body); text-decoration: none; cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s, background 0.2s, border-color 0.2s, opacity 0.2s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 4px 24px rgba(108, 99, 255, 0.35); }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(108, 99, 255, 0.45); }
+  .btn-secondary { background: transparent; color: var(--text); border-color: var(--border-strong); }
+  .btn-secondary:hover { border-color: var(--accent); background: rgba(108, 99, 255, 0.08); }
+  .btn-ghost { background: var(--surface2); color: var(--text); border-color: var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .btn-danger { background: transparent; color: var(--accent2); border-color: rgba(255, 101, 132, 0.4); }
+  .btn-danger:hover { background: rgba(255, 101, 132, 0.08); }
+  .btn-sm { padding: 0.45rem 0.9rem; border-radius: 8px; font-size: 0.85rem; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  /* How-to strip */
+  .howto { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem 1rem; }
+  .howto-card {
+    display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 2rem;
+    padding: 1.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  }
+  .howto h2 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.8rem; }
+  .steps { display: grid; gap: 0.55rem; margin: 0; padding-left: 1.2rem; color: var(--muted); }
+  .steps b { color: var(--text); font-weight: 600; }
+  .toggle { display: flex; gap: 0.8rem; align-items: flex-start; cursor: pointer; }
+  .toggle input {
+    appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 42px; height: 24px; margin: 0.1rem 0 0;
+    border-radius: 99px; background: var(--surface3); cursor: pointer; transition: background 0.2s;
+  }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.2s; }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { transform: translateX(18px); }
+  .toggle b { display: block; font-weight: 600; }
+  .toggle span span { display: block; margin-top: 0.2rem; font-size: 0.85rem; color: var(--muted); }
+  .meter { height: 8px; margin: 0.5rem 0 0.3rem; border-radius: 99px; background: var(--surface2); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent3)); transition: width 0.4s; }
+  .cov-mini { margin-top: 1.4rem; font-size: 0.9rem; color: var(--muted); }
+  .cov-mini b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .small { font-size: 0.82rem; color: var(--faint); }
+
+  /* Sections */
+  .divider { max-width: 1100px; height: 1px; margin: 0 auto; background: var(--border); }
+  .block { max-width: 1100px; margin: 0 auto; padding: 4.5rem 1.5rem; }
+  .section-label { margin-bottom: 0.6rem; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-strong); }
+  .block h2 { margin-bottom: 0.8rem; font-size: clamp(1.8rem, 3.5vw, 2.3rem); font-weight: 800; }
+  .lede { max-width: 64ch; color: var(--muted); }
+  .source-note { max-width: 70ch; margin-top: 0.6rem; font-size: 0.84rem; color: var(--faint); }
+  .source-note b { color: var(--muted); font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1.2rem 0 1.8rem; }
+  .chip {
+    padding: 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 99px; background: var(--surface);
+    font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted);
+  }
+  .chip.ok { color: var(--accent3); border-color: rgba(67, 233, 123, 0.4); background: rgba(67, 233, 123, 0.08); }
+  .chip.ok::before { content: "\2713  "; }
+  .chip.bad { color: var(--accent2); border-color: rgba(255, 101, 132, 0.45); }
+  .chip.bad::before { content: "\2715  "; }
+  .subhead { margin: 2rem 0 0.9rem; font-size: 1.05rem; font-weight: 700; }
+
+  /* Cards and tiles */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+  .card { position: relative; overflow: hidden; padding: 1.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+  button.card { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s; }
+  button.card::after { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2)); opacity: 0; transition: opacity 0.2s; }
+  button.card:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: var(--glow); }
+  button.card:hover::after, button.card.hit::after { opacity: 1; }
+  .card h3 { margin-bottom: 0.4rem; font-size: 1.05rem; font-weight: 700; }
+  .card p { font-size: 0.9rem; line-height: 1.6; color: var(--muted); }
+  .kicker { display: block; margin-bottom: 0.6rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent-strong); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; margin-top: 1rem; }
+  .tile { padding: 1rem 1.1rem; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: 12px; font-size: 0.88rem; color: var(--muted); }
+  .tile code { display: block; margin-bottom: 0.3rem; font-size: 0.8rem; }
+  .tile .btn { margin-top: 0.7rem; }
+
+  /* Panels and forms */
+  .panel { padding: clamp(1.2rem, 3vw, 2.2rem); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+  .panel h3 { margin-bottom: 1rem; font-size: 1.1rem; font-weight: 700; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; }
+  .field { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+  .field.full { grid-column: 1 / -1; }
+  label, .label { font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+  input, select, textarea {
+    width: 100%; padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface2); color: var(--text); font: inherit; font-size: 0.95rem;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.16); }
+  input[aria-invalid="true"], select[aria-invalid="true"] { border-color: rgba(255, 101, 132, 0.7); }
+  textarea { min-height: 100px; resize: vertical; }
+  select option { background: var(--surface2); }
+  .err { font-size: 0.8rem; color: var(--accent2); }
+  .err:empty { display: none; }
+  .success { margin-top: 1rem; padding: 0.9rem 1.2rem; border-radius: 8px; background: rgba(67, 233, 123, 0.1); border: 1px solid rgba(67, 233, 123, 0.3); color: var(--accent3); font-weight: 600; font-size: 0.92rem; }
+  .form-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; margin-top: 1.3rem; }
+  .options { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.7rem; }
+  .option { display: flex; gap: 0.7rem; align-items: center; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); cursor: pointer; font-size: 0.92rem; color: var(--text); font-weight: 500; }
+  .option:has(input:checked) { border-color: var(--accent); background: rgba(108, 99, 255, 0.12); }
+  .option input { width: auto; accent-color: var(--accent); }
+  .option small { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .check { display: inline-flex; gap: 0.5rem; align-items: center; font-size: 0.9rem; color: var(--text); font-weight: 500; }
+  .check input { width: auto; accent-color: var(--accent); }
+
+  /* Media */
+  .media-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1.2rem; align-items: start; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--border); border-radius: 14px; }
+  .caption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--faint); }
+  .links { display: grid; gap: 0.6rem; }
+  .link-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.8rem;
+    padding: 0.85rem 1.1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); text-decoration: none; font-weight: 600; font-size: 0.92rem; transition: border-color 0.2s, transform 0.2s;
+  }
+  .link-item:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .link-item small { font-family: var(--font-mono); font-weight: 400; color: var(--faint); }
+  .list-label { margin: 0.4rem 0 0.2rem; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+
+  /* Dialogs */
+  .backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); }
+  .dialog { position: relative; width: min(480px, 100%); max-height: calc(100vh - 2rem); overflow-y: auto; padding: 2rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; animation: rise 0.25s ease; }
+  .dialog h3 { margin-bottom: 0.6rem; font-size: 1.4rem; font-weight: 800; }
+  .dialog p { margin-bottom: 1.2rem; color: var(--muted); }
+  .dialog-close { position: absolute; top: 0.8rem; right: 0.8rem; width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 1.4rem; line-height: 1; cursor: pointer; }
+  .dialog-close:hover { background: var(--surface2); color: var(--text); }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+
+  /* Search */
+  .search-row { display: flex; gap: 0.7rem; }
+  .search-row input { flex: 1; }
+  .results { display: grid; gap: 0.6rem; margin-top: 1.2rem; }
+  .result { display: block; padding: 0.9rem 1.1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; color: var(--text); text-decoration: none; transition: border-color 0.2s, background 0.2s; }
+  .result:hover { border-color: var(--accent); background: var(--surface2); }
+  .result b { display: block; font-size: 0.95rem; }
+  .result span { font-size: 0.84rem; color: var(--muted); }
+  .result .pos { margin-right: 0.45rem; font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-strong); }
+
+  /* Products */
+  .products { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+  .product { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+  .product-media { display: block; width: 100%; aspect-ratio: 4 / 3; padding: 0; border: 0; background: var(--surface2); cursor: pointer; }
+  .product-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .product-body { display: flex; flex: 1; flex-direction: column; gap: 0.45rem; padding: 1rem 1.1rem 1.2rem; }
+  .product h3 { font-size: 1.02rem; font-weight: 700; }
+  .link-btn { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .link-btn:hover { color: var(--accent-strong); }
+  .price { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .price s { margin-left: 0.4rem; font-weight: 400; color: var(--faint); }
+  .stock { font-size: 0.8rem; color: var(--muted); }
+  .stock.out { color: var(--accent2); }
+  .product-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin-top: auto; padding-top: 0.4rem; }
+  [aria-pressed="true"].btn-ghost { color: var(--accent2); border-color: rgba(255, 101, 132, 0.5); }
+  .detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 1.8rem; margin-top: 1.4rem; }
+  .detail img { width: 100%; border: 1px solid var(--border); border-radius: 12px; }
+  .detail-meta { display: grid; gap: 0.8rem; align-content: start; }
+  .facts-row { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-size: 0.86rem; color: var(--muted); }
+  .facts-row b { color: var(--text); font-weight: 600; }
+  .reviews { display: grid; gap: 0.6rem; }
+  .review { padding: 0.8rem 1rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; font-size: 0.88rem; color: var(--muted); }
+  .review b { color: var(--text); }
+
+  /* Cart and checkout */
+  .table-scroll { overflow-x: auto; }
+  .cart-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  .cart-table th { padding: 0 0.6rem 0.6rem; text-align: left; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--border); }
+  .cart-table td { padding: 0.8rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .cart-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .qty { display: inline-flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; }
+  .qty button { width: 32px; height: 32px; border: 0; background: var(--surface2); color: var(--text); font-size: 1rem; cursor: pointer; }
+  .qty button:hover { background: var(--surface3); }
+  .qty span { min-width: 2.2em; text-align: center; font-variant-numeric: tabular-nums; }
+  .coupon-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 1.2rem; }
+  .coupon-row input { flex: 1 1 160px; max-width: 220px; text-transform: uppercase; }
+  .totals { display: grid; gap: 0.3rem; justify-items: end; margin-top: 1.2rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .totals .grand { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; color: var(--text); }
+  .empty-note { padding: 0.6rem 0; color: var(--muted); }
+  .stepper { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 1.4rem; padding: 0; list-style: none; }
+  .stepper li { padding: 0.35rem 0.85rem; border: 1px solid var(--border); border-radius: 99px; font-size: 0.82rem; color: var(--muted); }
+  .stepper li.active { color: var(--text); background: rgba(108, 99, 255, 0.14); border-color: var(--accent); }
+  .stepper li.done { color: var(--accent3); border-color: rgba(67, 233, 123, 0.4); }
+  .note { padding: 0.8rem 1rem; border: 1px dashed var(--border-strong); border-radius: 10px; font-size: 0.86rem; color: var(--muted); }
+
+  /* Plans and account */
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+  .plan { display: flex; flex-direction: column; gap: 0.6rem; padding: 1.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+  .plan.current { border-color: var(--accent); box-shadow: var(--glow); }
+  .plan .amount { font-family: var(--font-display); font-size: 2rem; font-weight: 800; }
+  .plan .amount small { font-family: var(--font-body); font-size: 0.9rem; font-weight: 400; color: var(--muted); }
+  .plan p { font-size: 0.88rem; color: var(--muted); }
+  .plan .btn { margin-top: auto; }
+  .sub-bar { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: end; margin-top: 1.2rem; }
+  .sub-bar .field { flex: 1 1 220px; max-width: 320px; }
+  .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+  .user-card { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+  .avatar { display: grid; place-items: center; flex: none; width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent2)); font-family: var(--font-display); font-weight: 800; }
+  .user-card b { display: block; }
+  .user-card span { font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
+  .actions-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .stack { display: grid; gap: 0.9rem; }
+
+  /* Custom and backend */
+  .custom-row { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: end; }
+  .custom-row .field { flex: 1 1 220px; }
+  .backend-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.8rem; }
+  .backend-item { padding: 1rem 1.1rem; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: 12px; }
+  .backend-item code { color: var(--amber); }
+  .backend-item p { margin-top: 0.3rem; font-size: 0.86rem; color: var(--muted); }
+
+  footer { display: grid; gap: 0.4rem; padding: 3rem 1.5rem 4rem; border-top: 1px solid var(--border); text-align: center; font-size: 0.85rem; color: var(--muted); }
+
+  /* Event log panel (tool UI, kept out of tracking) */
+  .event-panel {
+    position: fixed; top: var(--nav-h); right: 0; bottom: 0; z-index: 55; width: min(460px, 100vw);
+    display: flex; flex-direction: column; background: #0e0e15; border-left: 1px solid var(--border-strong);
+    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.5);
+  }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border); }
+  .tabs { display: flex; gap: 0.3rem; }
+  .tab { padding: 0.45rem 0.8rem; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted); font: 600 0.88rem var(--font-body); cursor: pointer; }
+  .tab[aria-selected="true"] { color: var(--text); background: var(--surface2); border-color: var(--border); }
+  .icon-btn { width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 1.4rem; line-height: 1; cursor: pointer; }
+  .icon-btn:hover { background: var(--surface2); color: var(--text); }
+  .panel-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--muted); }
+  .panel-bar .grow { flex: 1 1 140px; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 0.7rem 0.9rem 2rem; }
+  .log-list { display: grid; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+  .log-row details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .log-row.bad details { border-color: rgba(255, 101, 132, 0.45); }
+  .log-row summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 0.3rem 0.6rem; align-items: center; padding: 0.55rem 0.75rem; font-size: 0.84rem; cursor: pointer; list-style: none; }
+  .log-row summary::-webkit-details-marker { display: none; }
+  .log-row .t { font-family: var(--font-mono); font-size: 0.72rem; color: var(--faint); }
+  .log-row .n { font-family: var(--font-mono); font-weight: 500; overflow-wrap: anywhere; }
+  .src { padding: 0.05rem 0.45rem; border: 1px solid var(--border); border-radius: 99px; font-size: 0.7rem; color: var(--muted); }
+  .src.page { color: var(--accent-strong); border-color: var(--border-strong); }
+  .st { font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent3); }
+  .log-row.bad .st { color: var(--accent2); }
+  .log-row .extra { grid-column: 2 / -1; font-size: 0.72rem; color: var(--amber); }
+  .log-row pre { margin: 0; max-height: 340px; overflow: auto; padding: 0.7rem 0.8rem; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.5; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log-empty { padding: 1rem 0.2rem; font-size: 0.9rem; color: var(--muted); }
+  .cov-head { font-size: 0.92rem; color: var(--muted); }
+  .cov-head b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .cov-group h4 { margin: 1.1rem 0 0.35rem; font: 700 0.74rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .cov-list { display: grid; gap: 0.1rem; margin: 0; padding: 0; list-style: none; }
+  .cov-list li { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.15rem 0; font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); }
+  .cov-list li.ok { color: var(--accent3); }
+  .cov-list li.bad { color: var(--accent2); }
+  .cov-list li.extra { color: var(--amber); }
+  .toasts { position: fixed; left: 1rem; bottom: 1rem; z-index: 80; display: grid; gap: 0.4rem; pointer-events: none; }
+  .toast { padding: 0.55rem 0.9rem; background: var(--surface2); border: 1px solid var(--border-strong); border-radius: 10px; font-size: 0.84rem; color: var(--text); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); animation: rise 0.2s ease; }
+  .toast b { font-family: var(--font-mono); font-weight: 500; color: var(--accent-strong); }
+  .toast.bad { border-color: rgba(255, 101, 132, 0.55); }
+
+  @media (max-width: 820px) {
+    .howto-card, .media-grid, .detail { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .form-grid { grid-template-columns: minmax(0, 1fr); }
+    .topnav { gap: 0.9rem; }
+    .block { padding: 3.5rem 1rem; }
+    .howto { padding: 0 1rem 1rem; }
+    .btn-log .label-long { display: none; }
+    .logo { font-size: 1.05rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="scroll-bar"></div>
+
+<nav class="topnav" aria-label="Sections">
+  <a class="logo" href="#top">Umerang <span>Lab</span></a>
+  <div class="nav-links">
+    <a href="#core">Core</a>
+    <a href="#forms">Forms</a>
+    <a href="#media">Media</a>
+    <a href="#search">Search</a>
+    <a href="#shop">Shop</a>
+    <a href="#cart">Cart <span id="nav-cart-count"></span></a>
+    <a href="#checkout">Checkout</a>
+    <a href="#subscriptions">Plans</a>
+    <a href="#account">Account</a>
+    <a href="#custom">Custom</a>
+  </div>
+  <button type="button" class="btn-log" data-ulab-tool data-act="open"><span class="label-long">Event log</span><span class="sr-only">Open event log,</span><span class="badge" id="log-badge">0</span></button>
+</nav>
+
+<header class="hero" id="top">
+  <div class="status" id="collector-status"><span class="dot"></span><span id="status-text">Connecting to the Umerang collector…</span></div>
+  <h1>Fire Every <em>Event</em> In The Catalog</h1>
+  <p class="hero-sub">A test site for the Umerang Metrics &amp; Events Catalog. What you do on this page sends real events to the Umerang collector on staging (merchant <code>UTA7F4D868</code>). The event log shows every batch that was sent.</p>
+  <div class="hero-btns">
+    <button type="button" class="btn btn-primary" data-ulab-tool data-act="open">Open the event log</button>
+    <a class="btn btn-secondary" href="#shop">Start in the shop</a>
+  </div>
+</header>
+
+<div class="howto">
+  <div class="howto-card">
+    <div>
+      <h2>How to test</h2>
+      <ol class="steps">
+        <li><b>Use a section below.</b> Each one lists the catalog events it covers.</li>
+        <li><b>Open the event log</b> to see each batch the collector sent, decoded, with its HTTP status.</li>
+        <li><b>Check the Umerang dashboard</b> for the same events. A chip turns green once its event has been sent successfully.</li>
+      </ol>
+    </div>
+    <div>
+      <label class="toggle" for="manual-core">
+        <input type="checkbox" id="manual-core">
+        <span><b>Also send core events from this page</b><span>Off: section 1 events come only from the collector's own auto-capture, as the catalog says. On: this page also sends them with catalog field names, so expect doubles.</span></span>
+      </label>
+      <div class="cov-mini">
+        <span><b id="cov-mini-count">0</b> of <b id="cov-mini-total">62</b> browser events sent</span>
+        <div class="meter" aria-hidden="true"><i id="cov-mini-bar"></i></div>
+        <span class="small">The 7 backend-only events are not sent from a browser.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="block" id="core" data-events="session_start page_view page_view_end navigation scroll visibility_change click element_view print">
+  <p class="section-label">Section 1.1 · 1.2 — auto-captured</p>
+  <h2>Page views, navigation and clicks</h2>
+  <p class="lede">The catalog says the collector captures these by itself. Load the page, scroll, switch tabs and click around, then check the log.</p>
+  <p class="source-note"><b>Sent by:</b> the collector's auto-capture. With the toggle on, this page also sends them. The collector reports button clicks as <code>button_click</code>, which is not a catalog name.</p>
+  <div class="chips"></div>
+  <div class="cards">
+    <button type="button" class="card feature" id="feature-sessions"><span class="kicker">click</span><h3>Session analytics</h3><p>Sessions, page views and time on page, captured without extra code.</p></button>
+    <button type="button" class="card feature" id="feature-commerce"><span class="kicker">click</span><h3>Commerce tracking</h3><p>Product, cart and checkout events with order values.</p></button>
+    <button type="button" class="card feature" id="feature-identity"><span class="kicker">click</span><h3>Identity stitching</h3><p>Anonymous visitors linked to customers when they sign up or log in.</p></button>
+    <button type="button" class="card feature" id="feature-custom"><span class="kicker">click</span><h3>Custom events</h3><p>Merchant-defined events sent with <code>umerang.track()</code>.</p></button>
+  </div>
+  <div class="tiles">
+    <div class="tile"><code>session_start · page_view</code>Fire when the page loads. Reload for another page view. A new session starts after 30 minutes idle.</div>
+    <div class="tile"><code>page_view_end</code>Sent when you leave or reload the page. It goes out while the page is closing, so it can't show in this page's log; confirm it in the dashboard.</div>
+    <div class="tile"><code>scroll</code>Scroll to 25, 50, 75 and 100%. The bar at the very top shows how far.</div>
+    <div class="tile"><code>visibility_change</code>Switch to another browser tab, then come back.</div>
+    <div class="tile"><code>navigation</code>Use the section links in the top bar.</div>
+    <div class="tile" id="promo-banner" data-track-view><code>element_view</code>This card has the <code>data-track-view</code> attribute, so it counts as viewed once half of it is on screen.</div>
+    <div class="tile"><code>print</code>Open the print dialog. Cancelling is fine.<br><button type="button" class="btn btn-ghost btn-sm" id="print-btn">Print this page</button></div>
+  </div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="forms" data-events="form_focus form_blur form_change input_change form_error form_submission">
+  <p class="section-label">Section 1.2 — forms</p>
+  <h2>Contact form</h2>
+  <p class="lede">Focus, type in, change and submit the fields. Submit it empty to trigger <code>form_error</code>. Nothing is sent anywhere except the tracking events.</p>
+  <p class="source-note"><b>Sent by:</b> the collector's auto-capture, but only if form tracking is switched on for the merchant (it is off by default in the collector). With the toggle on, this page also sends them; the email and message values are hashed.</p>
+  <div class="chips"></div>
+  <div class="panel">
+    <form id="contact-form" name="contact" action="#forms" method="post" novalidate>
+      <div class="form-grid">
+        <div class="field"><label for="c-first">First name *</label><input id="c-first" name="first_name" autocomplete="given-name" required><span class="err" id="c-first-err"></span></div>
+        <div class="field"><label for="c-last">Last name *</label><input id="c-last" name="last_name" autocomplete="family-name" required><span class="err" id="c-last-err"></span></div>
+        <div class="field"><label for="c-email">Email *</label><input id="c-email" name="email" type="email" autocomplete="email" required><span class="err" id="c-email-err"></span></div>
+        <div class="field"><label for="c-topic">Topic</label>
+          <select id="c-topic" name="topic"><option value="">Choose a topic</option><option>General question</option><option>Order support</option><option>Partnership</option><option>Other</option></select>
+        </div>
+        <div class="field full"><label for="c-message">Message</label><textarea id="c-message" name="message" placeholder="Tell us anything. Test data only."></textarea></div>
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Send message</button></div>
+      <p class="success" id="contact-success" hidden>Message received. That fired <code>form_submission</code>; nothing else was sent.</p>
+    </form>
+  </div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="media" data-events="video_start video_progress video_end file_download external_link_click modal_open modal_close modal_action">
+  <p class="section-label">Section 1.2 — media and links</p>
+  <h2>Video, downloads and popups</h2>
+  <p class="lede">Play the video to the end, download a file, open an outside link, and open and close the popup in each of the three ways.</p>
+  <p class="source-note"><b>Sent by:</b> the collector's auto-capture. With the toggle on, this page also sends them.</p>
+  <div class="chips"></div>
+  <div class="media-grid">
+    <div>
+      <video id="demo-video" controls preload="metadata" playsinline src="media/flower.mp4" data-title="Flower sample clip"></video>
+      <p class="caption">Sample clip “Flower”, CC0, from MDN. About 5 seconds long, so progress milestones come quickly.</p>
+    </div>
+    <div class="links">
+      <p class="list-label">Downloads</p>
+      <a class="link-item" href="files/umerang-test-guide.pdf" download data-file="pdf" data-size="967">Test guide <small>PDF</small></a>
+      <a class="link-item" href="files/umerang-events.csv" download data-file="csv" data-size="7686">Catalog events <small>CSV</small></a>
+      <a class="link-item" href="files/umerang-sample-pack.zip" download data-file="zip" data-size="2380">Sample pack <small>ZIP</small></a>
+      <p class="list-label">Outside links</p>
+      <a class="link-item" href="https://clubeez.com" target="_blank" rel="noopener" data-external>Visit Clubeez <small>new tab</small></a>
+      <a class="link-item" href="https://umerang.com" target="_blank" rel="noopener" data-external>Visit Umerang <small>new tab</small></a>
+      <p class="list-label">Popup</p>
+      <button type="button" class="btn btn-ghost" id="open-offer">Open the offer popup</button>
+      <p class="small">Close it with the ×, the Esc key, or a click outside it.</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="search" data-events="search search_result_click">
+  <p class="section-label">Section 1.2 — search</p>
+  <h2>Site search</h2>
+  <p class="lede">Searching reloads the page with <code>?q=</code> in the address, like most store searches. Click a result to fire <code>search_result_click</code>.</p>
+  <p class="source-note"><b>Sent by:</b> the collector's auto-capture. With the toggle on, this page also sends them.</p>
+  <div class="chips"></div>
+  <form class="search-row" id="search-form" role="search" action="./#search" method="get">
+    <label class="sr-only" for="q">Search this site</label>
+    <input type="search" id="q" name="q" placeholder="Try sneaker, shipping or account" autocomplete="off">
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+  <div class="results" id="results" aria-live="polite"></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="shop" data-events="product_impression product_click viewed_product product_quickview product_compare product_review_view product_review_submit product_wishlist_add product_wishlist_remove">
+  <p class="section-label">Section 2.1 — products</p>
+  <h2>Shop</h2>
+  <p class="lede">Products fire <code>product_impression</code> as they scroll into view. Open one to fire <code>product_click</code> and <code>viewed_product</code>.</p>
+  <p class="source-note"><b>Sent by:</b> this page, with <code>umerang.track()</code> and the catalog's field names. Pressing a Wishlist button also makes the collector send its own <code>add_to_wishlist</code>.</p>
+  <div class="chips"></div>
+  <div class="products" id="product-grid"></div>
+  <div class="panel detail" id="product-detail" hidden></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="cart" data-events="added_to_cart removed_from_cart quantity_changed coupon_applied coupon_removed cart_view">
+  <p class="section-label">Section 2.2 — cart</p>
+  <h2>Cart</h2>
+  <p class="lede">Change quantities, apply <code>SAVE10</code> or <code>TEST20</code>, then check out. <code>cart_view</code> fires when this section comes into view.</p>
+  <p class="source-note"><b>Sent by:</b> this page. Pressing Checkout also makes the collector send its own <code>checkout_started</code>. <code>cart_abandoned</code> and <code>cart_recovered</code> are backend events; see the list at the bottom.</p>
+  <div class="chips"></div>
+  <div class="panel" id="cart-panel"></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="checkout" data-events="started_checkout checkout_step checkout_error billing_address_entered shipping_method_selected payment_method_selected placed_order">
+  <p class="section-label">Section 2.3 · 2.4 — checkout and order</p>
+  <h2>Checkout</h2>
+  <p class="lede">Three steps. Leave fields empty to trigger <code>checkout_error</code>. Test mode: no payment details are asked for or collected.</p>
+  <p class="source-note"><b>Sent by:</b> this page. Order fulfilment, refunds and returns are backend events.</p>
+  <div class="chips"></div>
+  <div class="panel" id="checkout-panel"></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="subscriptions" data-events="subscription_start subscription_upgrade subscription_downgrade subscription_cancel">
+  <p class="section-label">Section 2.5 — subscriptions</p>
+  <h2>Membership plans</h2>
+  <p class="lede">Subscribe, move up or down a plan, or cancel.</p>
+  <p class="source-note"><b>Sent by:</b> this page. The Subscribe buttons also make the collector send its own <code>subscribe</code> event. <code>subscription_upgrade</code> sends the field <code>upgrDelta</code>, spelled as in the catalog.</p>
+  <div class="chips"></div>
+  <div class="plans" id="plans"></div>
+  <div class="sub-bar" id="sub-bar"></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="account" data-events="identify account_created login logout profile_update email_confirmed phone_confirmed password_reset email_unsubscribe consent_update">
+  <p class="section-label">Section 3 — customer identity</p>
+  <h2>Account</h2>
+  <p class="lede">Sign up or log in first. That calls <code>umerang.identify()</code>, so later events carry your email and customer ID. Use test details only.</p>
+  <p class="source-note"><b>Sent by:</b> this page, with <code>umerang.identify()</code> and <code>umerang.track()</code>.</p>
+  <div class="chips"></div>
+  <div class="account-grid" id="account-grid"></div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="custom" data-events="custom_event">
+  <p class="section-label">Section 4 — custom events</p>
+  <h2>Custom merchant events</h2>
+  <p class="lede">Send any merchant-defined event with <code>umerang.track()</code>. Pick one of the catalog's examples or type your own name.</p>
+  <p class="source-note"><b>Sent by:</b> this page. Names must start with a letter and use only letters, numbers, <code>_</code> or <code>-</code> (up to 64 characters), or the collector drops them.</p>
+  <div class="chips"></div>
+  <div class="panel">
+    <form class="custom-row" id="custom-form" novalidate>
+      <div class="field"><label for="custom-example">Catalog example</label><select id="custom-example"></select></div>
+      <div class="field"><label for="custom-name">Or your own event name</label><input id="custom-name" placeholder="e.g. gift_card_viewed" autocomplete="off" spellcheck="false"></div>
+      <button type="submit" class="btn btn-primary">Send custom event</button>
+    </form>
+    <p class="err" id="custom-err"></p>
+  </div>
+</section>
+
+<div class="divider"></div>
+<section class="block" id="backend">
+  <p class="section-label">Server-side</p>
+  <h2>Backend-only events</h2>
+  <p class="lede">The catalog marks these as detected on the server, so this page never sends them. Check them in the dashboard after their trigger happens.</p>
+  <div class="backend-list" id="backend-list" style="margin-top:1.6rem"></div>
+</section>
+
+<footer>
+  <p>Umerang Lab · tracking test site · collector <code>stage-app.clubeez.com</code> · merchant <code>UTA7F4D868</code></p>
+  <p>Built from the Confluence page “Metrics &amp; Events Catalog” (last edited 22 Jul 2026). Test data only.</p>
+</footer>
+
+<div class="backdrop" id="offer-backdrop" hidden>
+  <div class="dialog" id="offer-modal" role="dialog" aria-modal="true" aria-labelledby="offer-title" aria-hidden="true" data-modal-name="Offer popup">
+    <button type="button" class="dialog-close" data-close="user_click" aria-label="Close popup">×</button>
+    <h3 id="offer-title">10% off your first order</h3>
+    <p>Use code <code>SAVE10</code> in the cart. This popup exists to test <code>modal_open</code>, <code>modal_action</code> and <code>modal_close</code>.</p>
+    <div class="form-actions"><button type="button" class="btn btn-primary" id="offer-claim">Claim the code</button><button type="button" class="btn btn-secondary" data-close="user_click">No thanks</button></div>
+  </div>
+</div>
+
+<div class="backdrop" id="qv-backdrop" hidden>
+  <div class="dialog" id="quickview-modal" role="dialog" aria-modal="true" aria-labelledby="qv-title" aria-hidden="true" data-modal-name="Product quick view">
+    <button type="button" class="dialog-close" data-close="user_click" aria-label="Close quick view">×</button>
+    <div id="qv-body"></div>
+  </div>
+</div>
+
+<aside class="event-panel" id="event-panel" data-ulab-tool aria-label="Event log" hidden>
+  <div class="panel-head">
+    <div class="tabs" role="tablist" aria-label="Event log views">
+      <button type="button" class="tab" role="tab" id="tab-log" aria-selected="true" aria-controls="panel-log" data-act="tab" data-tab="log">Log <span id="log-count">0</span></button>
+      <button type="button" class="tab" role="tab" id="tab-coverage" aria-selected="false" aria-controls="panel-coverage" data-act="tab" data-tab="coverage">Coverage <span id="cov-count">0/62</span></button>
+    </div>
+    <button type="button" class="icon-btn" data-act="close" aria-label="Close event log">×</button>
+  </div>
+  <div class="panel-bar">
+    <span class="grow" id="pending-note">Nothing waiting to send.</span>
+    <button type="button" class="btn btn-ghost btn-sm" data-act="flush">Flush now</button>
+    <button type="button" class="btn btn-ghost btn-sm" data-act="clear">Clear log</button>
+  </div>
+  <div class="panel-body" id="panel-log" role="tabpanel" aria-labelledby="tab-log"><ol class="log-list" id="log-list"></ol></div>
+  <div class="panel-body" id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage" hidden></div>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script type="application/json" id="catalog-data">{"merchantId":"UTA7F4D868","events":[{"name":"session_start","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"First page view of new session (after 30-min inactivity or new day)"},{"name":"page_view","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"User loads a new page or route changes (SPA)"},{"name":"page_view_end","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"User leaves page (navigation or unload)"},{"name":"navigation","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"User clicks to navigate (internal link)"},{"name":"scroll","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"User scrolls to a new depth (triggers at 25%, 50%, 75%, 100%)"},{"name":"visibility_change","groupTitle":"1.1 Session & Navigation Events","serverSide":false,"trigger":"Browser tab comes into focus or goes into background"},{"name":"click","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User clicks any element"},{"name":"form_focus","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User focuses on form field"},{"name":"form_blur","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User leaves form field"},{"name":"form_change","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User modifies form field"},{"name":"form_submission","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User submits form"},{"name":"form_error","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"Form validation error occurs"},{"name":"input_change","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User types in text field (debounced)"},{"name":"search","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User performs site search"},{"name":"search_result_click","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User clicks on search result"},{"name":"video_start","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User starts playing video"},{"name":"video_progress","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User watches video milestone (25%, 50%, 75%, 100%)"},{"name":"video_end","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"Video ends or user stops watching"},{"name":"file_download","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User downloads file"},{"name":"external_link_click","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User clicks link to external site"},{"name":"modal_open","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"Modal or popup opens"},{"name":"modal_close","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"Modal or popup closes"},{"name":"modal_action","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User takes action inside modal (e.g., subscribes, buys)"},{"name":"element_view","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"Element becomes visible in viewport (lazy loading)"},{"name":"print","groupTitle":"1.2 Interaction Events","serverSide":false,"trigger":"User prints page"},{"name":"viewed_product","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User views product detail page"},{"name":"product_impression","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"Product appears in product list/search results"},{"name":"product_click","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User clicks product in list (navigates to detail page)"},{"name":"product_quickview","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User opens product quickview modal"},{"name":"product_compare","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User adds product to comparison list"},{"name":"product_review_view","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User views product reviews"},{"name":"product_review_submit","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User submits product review"},{"name":"product_wishlist_add","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User adds product to wishlist"},{"name":"product_wishlist_remove","groupTitle":"2.1 Product Events","serverSide":false,"trigger":"User removes product from wishlist"},{"name":"added_to_cart","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User adds item to shopping cart"},{"name":"removed_from_cart","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User removes item from cart"},{"name":"quantity_changed","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User updates item quantity in cart"},{"name":"coupon_applied","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User applies coupon code to cart"},{"name":"coupon_removed","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User removes coupon code"},{"name":"cart_view","groupTitle":"2.2 Cart Events","serverSide":false,"trigger":"User views shopping cart"},{"name":"cart_abandoned","groupTitle":"2.2 Cart Events","serverSide":true,"trigger":"Cart exists with items >1 hour with no activity (server-side)"},{"name":"cart_recovered","groupTitle":"2.2 Cart Events","serverSide":true,"trigger":"User completes purchase from abandoned cart (server-side)"},{"name":"started_checkout","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"User initiates checkout process (clicks \"Checkout\")"},{"name":"checkout_step","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"User completes checkout step (multi-step checkout)"},{"name":"checkout_error","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"Validation error during checkout"},{"name":"checkout_abandoned","groupTitle":"2.3 Checkout Events","serverSide":true,"trigger":"User leaves checkout (server-side detection)"},{"name":"billing_address_entered","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"User enters billing address"},{"name":"shipping_method_selected","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"User selects shipping method"},{"name":"payment_method_selected","groupTitle":"2.3 Checkout Events","serverSide":false,"trigger":"User selects payment method"},{"name":"placed_order","groupTitle":"2.4 Order Events","serverSide":false,"trigger":"Order confirmation after successful payment"},{"name":"order_completed","groupTitle":"2.4 Order Events","serverSide":true,"trigger":"Order ships or is marked complete (server-side)"},{"name":"order_refund","groupTitle":"2.4 Order Events","serverSide":true,"trigger":"Order is refunded (server-side)"},{"name":"order_return","groupTitle":"2.4 Order Events","serverSide":true,"trigger":"Customer initiates return (server-side)"},{"name":"repeat_purchase","groupTitle":"2.4 Order Events","serverSide":true,"trigger":"Customer places second+ order (server-side)"},{"name":"subscription_start","groupTitle":"2.5 Subscription Events","serverSide":false,"trigger":"Customer subscribes to product/service"},{"name":"subscription_cancel","groupTitle":"2.5 Subscription Events","serverSide":false,"trigger":"Customer cancels subscription"},{"name":"subscription_upgrade","groupTitle":"2.5 Subscription Events","serverSide":false,"trigger":"Customer upgrades subscription plan"},{"name":"subscription_downgrade","groupTitle":"2.5 Subscription Events","serverSide":false,"trigger":"Customer downgrades subscription plan"},{"name":"identify","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Manual call to umerang.identify() or auto-detection from email link"},{"name":"profile_update","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer updates profile information"},{"name":"email_confirmed","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer confirms email address"},{"name":"phone_confirmed","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer confirms phone number"},{"name":"account_created","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer creates account on merchant site"},{"name":"login","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer logs into account"},{"name":"logout","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer logs out"},{"name":"password_reset","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer resets password"},{"name":"email_unsubscribe","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer unsubscribes from emails"},{"name":"consent_update","groupTitle":"3 Customer Identity Events","serverSide":false,"trigger":"Customer updates consent preferences"},{"name":"custom_event","groupTitle":"4 Custom Merchant Events","serverSide":false,"trigger":"Any merchant-defined event via umerang.track()"}],"customExamples":["newsletter_signup","contact_form_submission","live_chat_started","product_comparison","product_recommendation_viewed","loyalty_program_joined","referral_sent","help_article_viewed","blog_article_read","webinar_registered","quiz_completed","giveaway_entered"]}</script>
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- Catalog and helpers ---------- */
+  const CATALOG = JSON.parse(document.getElementById('catalog-data').textContent);
+  const BY_NAME = new Map(CATALOG.events.map(e => [e.name, e]));
+  const BROWSER_EVENTS = CATALOG.events.filter(e => !e.serverSide);
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ESC[c]);
+  const money = n => Math.round(n * 100) / 100;
+  const fmt = n => '$' + n.toFixed(2);
+  const rid = prefix => prefix + '_' + Math.random().toString(36).slice(2, 10);
+  const pageUrl = () => location.href.split('#')[0];
+  const seconds = ms => Math.max(0, Math.round(ms / 1000));
+  const loadedAt = performance.now();
+
+  const store = {
+    get(key, fallback, session) {
+      try {
+        const raw = (session ? sessionStorage : localStorage).getItem('ulab.' + key);
+        return raw == null ? fallback : JSON.parse(raw);
+      } catch (e) { return fallback; }
+    },
+    set(key, value, session) {
+      try { (session ? sessionStorage : localStorage).setItem('ulab.' + key, JSON.stringify(value)); } catch (e) {}
+    },
+  };
+
+  async function sha256(value, short) {
+    if (!value) return '';
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+      const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+      return short ? 'sha256:' + hex.slice(0, 16) : hex;
+    } catch (e) { return '[hashed]'; }
+  }
+
+  function utmParams() {
+    const p = new URLSearchParams(location.search);
+    return {
+      utmSource: p.get('utm_source'), utmMedium: p.get('utm_medium'), utmCampaign: p.get('utm_campaign'),
+      utmContent: p.get('utm_content'), utmTerm: p.get('utm_term'),
+    };
+  }
+
+  /* ---------- State ---------- */
+  const state = {
+    manualCore: store.get('manualCore', false),
+    seen: store.get('seen', {}),
+    extra: store.get('extra', {}),
+    customSent: store.get('customSent', []),
+    log: store.get('log', [], true),
+    pending: {},
+  };
+  const saveCoverage = () => { store.set('seen', state.seen); store.set('extra', state.extra); store.set('customSent', state.customSent); };
+
+  /* ---------- Sending ---------- */
+  const toastsEl = $('#toasts');
+  function toast(html, bad) {
+    const el = document.createElement('div');
+    el.className = 'toast' + (bad ? ' bad' : '');
+    el.innerHTML = html;
+    toastsEl.appendChild(el);
+    while (toastsEl.children.length > 4) toastsEl.firstElementChild.remove();
+    setTimeout(() => el.remove(), 2200);
+  }
+  function markPending(name) {
+    state.pending[name] = (state.pending[name] || 0) + 1;
+    renderPending();
+  }
+  // The collector replays its own queue before it reads the merchant ID, so calls made before it is
+  // ready are held here and handed over once it has loaded.
+  const early = [];
+  const collectorReady = () => typeof window.umerang === 'function' && !!window.umerang.version;
+  function deliver(kind, a, b) {
+    try {
+      if (kind === 'identify') window.umerang.identify(a);
+      else window.umerang.track(a, b);
+      return true;
+    } catch (e) { return false; }
+  }
+  function queue(kind, name, a, b) {
+    if (collectorReady()) {
+      if (!deliver(kind, a, b)) { toast('Could not send <b>' + esc(name) + '</b>', true); return; }
+    } else {
+      early.push([kind, a, b]);
+    }
+    markPending(name);
+    toast('Queued <b>' + esc(name) + '</b>');
+  }
+  const send = (name, props) => queue('track', name, name, props || {});
+  const core = (name, props) => { if (state.manualCore) send(name, props); };
+  const identify = traits => queue('identify', 'identify', traits);
+  document.addEventListener('DOMContentLoaded', () => {
+    if (collectorReady()) for (const [kind, a, b] of early.splice(0)) deliver(kind, a, b);
+  });
+
+  /* ---------- Reading what the collector sent ---------- */
+  function onBatch(batch) {
+    let data = null;
+    try { data = JSON.parse(batch.text); } catch (e) {}
+    const events = data && Array.isArray(data.events) ? data.events : [];
+    const ok = batch.via === 'beacon' ? batch.ok : batch.status >= 200 && batch.status < 300;
+    for (const ev of events) {
+      const name = String(ev.eventType || '(no eventType)');
+      let src = 'collector';
+      if (state.pending[name] > 0) { state.pending[name]--; src = 'page'; }
+      const hit = key => {
+        const s = state.seen[key] || (state.seen[key] = { n: 0, ok: 0, fail: 0 });
+        s.n++;
+        if (ok) s.ok++; else s.fail++;
+      };
+      hit(name);
+      if (state.customSent.includes(name)) hit('custom_event');
+      else if (!BY_NAME.has(name)) state.extra[name] = (state.extra[name] || 0) + 1;
+      state.log.unshift({ at: batch.at, name, src, via: batch.via, status: batch.status, ok, ev });
+    }
+    if (!events.length) {
+      state.log.unshift({ at: batch.at, name: '(unreadable batch)', src: 'collector', via: batch.via, status: batch.status, ok, ev: { raw: String(batch.text || '').slice(0, 2000) } });
+    }
+    if (state.log.length > 200) state.log.length = 200;
+    store.set('log', state.log, true);
+    saveCoverage();
+    if (!ok && batch.via === 'fetch') setStatus('warn', 'The collector sent a batch that was rejected (HTTP ' + batch.status + '). Check the log.');
+    renderAll();
+  }
+
+  /* ---------- Rendering: chips, log, coverage ---------- */
+  const seenState = name => {
+    const s = state.seen[name];
+    if (!s) return '';
+    return s.ok > 0 ? 'ok' : s.fail > 0 ? 'bad' : '';
+  };
+  function renderChips() {
+    for (const box of $$('[data-events]')) {
+      const holder = $('.chips', box);
+      if (!holder) continue;
+      holder.innerHTML = box.dataset.events.split(/\s+/).map(name => {
+        const s = state.seen[name];
+        const cls = seenState(name);
+        return '<span class="chip' + (cls ? ' ' + cls : '') + '" title="' + esc((BY_NAME.get(name) || {}).trigger || '') + '">' +
+          esc(name) + (s ? ' ×' + s.n : '') + '</span>';
+      }).join('');
+    }
+  }
+  const coveredCount = () => BROWSER_EVENTS.filter(e => seenState(e.name) === 'ok').length;
+  function renderCounts() {
+    const covered = coveredCount();
+    $('#log-badge').textContent = state.log.length;
+    $('#log-count').textContent = state.log.length;
+    $('#cov-count').textContent = covered + '/' + BROWSER_EVENTS.length;
+    $('#cov-mini-count').textContent = covered;
+    $('#cov-mini-total').textContent = BROWSER_EVENTS.length;
+    $('#cov-mini-bar').style.width = (covered / BROWSER_EVENTS.length * 100) + '%';
+  }
+  function renderPending() {
+    const n = Object.values(state.pending).reduce((a, b) => a + b, 0);
+    $('#pending-note').textContent = n
+      ? n + (n === 1 ? ' event' : ' events') + ' sent by the page, waiting in the collector queue.'
+      : 'Nothing waiting to send.';
+  }
+  const time = at => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  function renderLog() {
+    const list = $('#log-list');
+    if (!state.log.length) {
+      list.innerHTML = '<li class="log-empty">No events yet. Use the page; the collector sends events in batches every few seconds, or press “Flush now”.</li>';
+      return;
+    }
+    list.innerHTML = state.log.map(item => {
+      const catalogName = BY_NAME.has(item.name) || state.customSent.includes(item.name);
+      return '<li class="log-row' + (item.ok ? '' : ' bad') + '"><details><summary>' +
+        '<span class="t">' + time(item.at) + '</span>' +
+        '<span class="n">' + esc(item.name) + '</span>' +
+        '<span class="src' + (item.src === 'page' ? ' page' : '') + '">' + (item.src === 'page' ? 'page' : 'collector') + '</span>' +
+        '<span class="st">' + esc(item.via === 'beacon' ? 'beacon ' + item.status : 'HTTP ' + item.status) + '</span>' +
+        (catalogName ? '' : '<span class="extra">not in the catalog</span>') +
+        '</summary><pre>' + esc(JSON.stringify(item.ev, null, 2)) + '</pre></details></li>';
+    }).join('');
+  }
+  function renderCoverage() {
+    const groups = new Map();
+    for (const e of CATALOG.events) {
+      const key = e.serverSide ? 'Backend-only (not expected from a browser)' : e.groupTitle;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    const covered = coveredCount();
+    let html = '<p class="cov-head"><b>' + covered + '</b> of <b>' + BROWSER_EVENTS.length + '</b> browser events sent successfully.</p>' +
+      '<div class="meter"><i style="width:' + (covered / BROWSER_EVENTS.length * 100) + '%"></i></div>' +
+      '<p class="small"><code>page_view_end</code> goes out while the page is closing, so this page can\'t confirm it. Check the dashboard.</p>';
+    for (const [title, list] of groups) {
+      html += '<div class="cov-group"><h4>' + esc(title) + '</h4><ul class="cov-list">' + list.map(e => {
+        const s = state.seen[e.name];
+        const cls = seenState(e.name);
+        const mark = cls === 'ok' ? '✓' : cls === 'bad' ? '✕' : '○';
+        return '<li class="' + cls + '" title="' + esc(e.trigger) + '"><span>' + mark + ' ' + esc(e.name) + '</span><span>' + (s ? '×' + s.n : '') + '</span></li>';
+      }).join('') + '</ul></div>';
+    }
+    const extra = Object.entries(state.extra).sort((a, b) => b[1] - a[1]);
+    html += '<div class="cov-group"><h4>Sent, but not in the catalog</h4>' + (extra.length
+      ? '<ul class="cov-list">' + extra.map(([n, c]) => '<li class="extra"><span>' + esc(n) + '</span><span>×' + c + '</span></li>').join('') + '</ul>'
+      : '<p class="small">None yet.</p>') + '</div>';
+    html += '<p style="margin-top:1.4rem"><button type="button" class="btn btn-danger btn-sm" data-act="reset">Reset coverage</button></p>';
+    $('#panel-coverage').innerHTML = html;
+  }
+  function renderAll() { renderChips(); renderCounts(); renderPending(); renderLog(); renderCoverage(); }
+
+  /* ---------- Collector status ---------- */
+  function setStatus(kind, text) {
+    const el = $('#collector-status');
+    el.className = 'status ' + kind;
+    $('#status-text').textContent = text;
+  }
+  let statusLocked = false;
+  function checkCollector() {
+    if (statusLocked) return;
+    const u = window.umerang;
+    if (window.__ulabCollectorError) {
+      statusLocked = true;
+      return setStatus('bad', 'Collector blocked: no events are being sent. Check ad blockers.');
+    }
+    if (typeof u === 'function' && u.version) {
+      statusLocked = true;
+      if (navigator.globalPrivacyControl === true) {
+        return setStatus('warn', 'Collector ' + u.version + ' loaded, but your browser sends Global Privacy Control, so it may not track you.');
+      }
+      return setStatus('ok', 'Umerang tracking active · merchant ' + CATALOG.merchantId + ' · collector ' + u.version);
+    }
+    setStatus('warn', 'Waiting for the Umerang collector…');
+  }
+  document.addEventListener('DOMContentLoaded', checkCollector);
+  setTimeout(checkCollector, 5000);
+
+  /* ---------- Tool UI: kept out of tracking ---------- */
+  // The collector listens for clicks on the document. Clicks inside [data-ulab-tool] stop at the window
+  // so the log panel's own buttons never show up as button_click events.
+  const panel = $('#event-panel');
+  function setTab(name) {
+    for (const t of $$('.tab', panel)) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+    $('#panel-log').hidden = name !== 'log';
+    $('#panel-coverage').hidden = name !== 'coverage';
+  }
+  function toolAction(act, el) {
+    if (act === 'open') { panel.hidden = false; $('.tab[aria-selected="true"]', panel).focus(); }
+    else if (act === 'close') panel.hidden = true;
+    else if (act === 'tab') setTab(el.dataset.tab);
+    else if (act === 'flush') {
+      try { window.umerang.debug.flush(); toast('Flushing the collector queue'); }
+      catch (e) { toast('The collector is not loaded, so there is nothing to flush.', true); }
+    } else if (act === 'clear') { state.log = []; store.set('log', [], true); renderAll(); }
+    else if (act === 'reset') {
+      state.seen = {}; state.extra = {}; state.customSent = [];
+      saveCoverage(); renderAll();
+      toast('Coverage reset');
+    }
+  }
+  window.addEventListener('click', e => {
+    const tool = e.target instanceof Element ? e.target.closest('[data-ulab-tool]') : null;
+    if (!tool) return;
+    e.stopPropagation();
+    const actEl = e.target.closest('[data-act]');
+    if (actEl) toolAction(actEl.dataset.act, actEl);
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !panel.hidden && !openDialogs.length) panel.hidden = true;
+  });
+
+  const manualToggle = $('#manual-core');
+  manualToggle.checked = state.manualCore;
+  manualToggle.addEventListener('change', () => {
+    state.manualCore = manualToggle.checked;
+    store.set('manualCore', state.manualCore);
+    toast(state.manualCore ? 'The page now also sends core events' : 'Core events now come only from the collector');
+  });
+
+  /* ---------- Section 1.1: session, page, scroll, visibility ---------- */
+  function deviceType() {
+    const ua = navigator.userAgent;
+    if (/iPad|Tablet/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua))) return 'tablet';
+    return /Mobi|iPhone|Android/i.test(ua) ? 'mobile' : 'desktop';
+  }
+  function referrerInfo() {
+    const ref = document.referrer || '';
+    let domain = '';
+    try { domain = ref ? new URL(ref).hostname : ''; } catch (e) {}
+    const medium = (new URLSearchParams(location.search).get('utm_medium') || '').toLowerCase();
+    let type = null;
+    if (/^(cpc|ppc|paid|paidsearch|display)$/.test(medium)) type = 'paid';
+    else if (medium === 'email') type = 'email';
+    else if (medium === 'social') type = 'social';
+    else if (!ref) type = 'direct';
+    else if (domain === location.hostname) type = 'internal';
+    else if (/google\.|bing\.|duckduckgo\.|yahoo\.|ecosia\./.test(domain)) type = 'organic';
+    else if (/facebook\.|instagram\.|linkedin\.|twitter\.|x\.com|t\.co|reddit\.|tiktok\./.test(domain)) type = 'social';
+    return { referrer: ref, referrerDomain: domain, referrerType: type };
+  }
+  const lastVisit = store.get('lastVisit', null);
+  store.set('lastVisit', Date.now());
+  window.addEventListener('load', () => {
+    if (state.manualCore && !store.get('sessionStarted', false, true)) {
+      store.set('sessionStarted', true, true);
+      core('session_start', {
+        userAgent: navigator.userAgent, deviceType: deviceType(), returnVisitor: lastVisit != null,
+        daysSinceLastVisit: lastVisit ? Math.floor((Date.now() - lastVisit) / 86400000) : 0,
+        customProperties: { site: 'umerang-lab' },
+      });
+    }
+    const nav = performance.getEntriesByType('navigation')[0];
+    const q = new URLSearchParams(location.search);
+    const ref = referrerInfo();
+    const props = {
+      url: location.href, path: location.pathname, hostname: location.hostname, title: document.title,
+      referrer: ref.referrer, referrerDomain: ref.referrerDomain,
+      userAgent: navigator.userAgent, language: navigator.language,
+      screenResolution: screen.width + 'x' + screen.height, viewportSize: innerWidth + 'x' + innerHeight,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      pageLoadTime: nav ? Math.round(nav.loadEventStart || nav.domContentLoadedEventEnd) : null,
+      ...utmParams(), gclid: q.get('gclid'), fbclid: q.get('fbclid'),
+      customProperties: { site: 'umerang-lab' },
+    };
+    if (ref.referrerType) props.referrerType = ref.referrerType;
+    core('page_view', props);
+  });
+
+  const scrollBar = $('#scroll-bar');
+  const scrollMarks = new Set();
+  let maxScroll = 0;
+  let interacted = false;
+  function onScroll() {
+    const room = document.documentElement.scrollHeight - innerHeight;
+    const pct = room > 0 ? Math.min(100, Math.round(scrollY / room * 100)) : 100;
+    scrollBar.style.width = pct + '%';
+    maxScroll = Math.max(maxScroll, pct);
+    for (const m of [25, 50, 75, 100]) {
+      if (pct >= m && !scrollMarks.has(m)) {
+        scrollMarks.add(m);
+        core('scroll', { url: pageUrl(), scrollDepth: m, timeOnPage: seconds(performance.now() - loadedAt) });
+      }
+    }
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  document.addEventListener('click', () => { interacted = true; }, true);
+  addEventListener('pagehide', () => {
+    core('page_view_end', {
+      url: pageUrl(), path: location.pathname, timeOnPage: seconds(performance.now() - loadedAt),
+      scrollDepth: maxScroll, engaged: maxScroll > 20, bounced: !interacted && maxScroll === 0,
+    });
+  });
+  let hiddenAt = null;
+  document.addEventListener('visibilitychange', () => {
+    const visible = document.visibilityState === 'visible';
+    const props = { visible };
+    if (visible && hiddenAt) props.timeHiddenSeconds = seconds(Date.now() - hiddenAt);
+    hiddenAt = visible ? null : Date.now();
+    core('visibility_change', props);
+  });
+
+  /* ---------- Section 1.2: navigation, clicks, element views, print ---------- */
+  document.addEventListener('click', e => {
+    const a = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
+    if (!a || a.closest('[data-ulab-tool]')) return;
+    const href = a.getAttribute('href');
+    if (href === '#') return;
+    core('navigation', {
+      fromUrl: location.href, toUrl: new URL(href, location.href).href, linkText: a.textContent.trim().slice(0, 100),
+      linkHref: href, linkClass: a.className || '', linkElement: 'a',
+    });
+  });
+  for (const card of $$('.feature')) {
+    card.addEventListener('click', e => {
+      card.classList.add('hit');
+      setTimeout(() => card.classList.remove('hit'), 600);
+      core('click', {
+        url: location.href, elementType: 'button', elementText: $('h3', card).textContent.trim(), elementId: card.id,
+        elementClass: card.className, targetUrl: null, clickX: Math.round(e.clientX), clickY: Math.round(e.clientY),
+      });
+    });
+  }
+  if ('IntersectionObserver' in window) {
+    const viewObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        viewObserver.unobserve(entry.target);
+        const mid = entry.boundingClientRect.top + entry.boundingClientRect.height / 2;
+        const third = innerHeight / 3;
+        core('element_view', {
+          elementId: entry.target.id || '', elementType: entry.target.tagName.toLowerCase(), elementClass: entry.target.className || '',
+          viewportPosition: mid < third ? 'above' : mid < third * 2 ? 'center' : 'below',
+        });
+      }
+    }, { threshold: 0.5 });
+    $$('[data-track-view]').forEach(el => viewObserver.observe(el));
+  }
+  $('#print-btn').addEventListener('click', () => window.print());
+  addEventListener('beforeprint', () => core('print', { url: pageUrl(), pageTitle: document.title }));
+
+  /* ---------- Section 1.2: contact form ---------- */
+  const contact = $('#contact-form');
+  const contactFields = $$('input, select, textarea', contact);
+  const fieldType = el => el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : el.type;
+  const fieldLabel = el => { const l = contact.querySelector('label[for="' + el.id + '"]'); return l ? l.textContent.replace('*', '').trim() : ''; };
+  const sensitive = el => el.type === 'email' || el.tagName === 'TEXTAREA';
+  const focusedAt = new Map();
+  const lastValue = new Map();
+  const typingTimers = new Map();
+  contact.addEventListener('focusin', e => {
+    const el = e.target;
+    if (!contactFields.includes(el)) return;
+    focusedAt.set(el, performance.now());
+    if (!lastValue.has(el)) lastValue.set(el, el.value);
+    core('form_focus', { formId: contact.id, formName: contact.getAttribute('name'), fieldName: el.name, fieldType: fieldType(el), fieldLabel: fieldLabel(el) });
+  });
+  contact.addEventListener('focusout', e => {
+    const el = e.target;
+    if (!contactFields.includes(el)) return;
+    const started = focusedAt.get(el);
+    core('form_blur', {
+      formId: contact.id, fieldName: el.name, timeInFieldSeconds: started ? seconds(performance.now() - started) : 0,
+      hasValue: el.value.trim() !== '', valueLength: el.value.length,
+    });
+  });
+  contact.addEventListener('change', async e => {
+    const el = e.target;
+    if (!contactFields.includes(el) || !state.manualCore) return;
+    const before = lastValue.get(el) || '';
+    lastValue.set(el, el.value);
+    const hide = sensitive(el);
+    core('form_change', {
+      formId: contact.id, fieldName: el.name, fieldType: fieldType(el),
+      oldValue: hide ? await sha256(before, true) : before, newValue: hide ? await sha256(el.value, true) : el.value,
+    });
+  });
+  contact.addEventListener('input', e => {
+    const el = e.target;
+    if (!contactFields.includes(el) || el.tagName === 'SELECT') return;
+    clearTimeout(typingTimers.get(el));
+    typingTimers.set(el, setTimeout(() => {
+      core('input_change', { fieldName: el.name, fieldType: fieldType(el), currentLength: el.value.length, isValid: el.checkValidity() });
+    }, 500));
+  });
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  function showError(input, message) {
+    input.setAttribute('aria-invalid', message ? 'true' : 'false');
+    const err = document.getElementById(input.id + '-err');
+    if (err) err.textContent = message || '';
+  }
+  contact.addEventListener('submit', e => {
+    e.preventDefault();
+    const errors = [];
+    for (const [id, label] of [['c-first', 'First name'], ['c-last', 'Last name']]) {
+      const el = document.getElementById(id);
+      const msg = el.value.trim() ? '' : label + ' is required';
+      showError(el, msg);
+      if (msg) errors.push({ field: el.name, message: msg, type: 'required' });
+    }
+    const email = $('#c-email');
+    const emailMsg = !email.value.trim() ? 'Email is required' : EMAIL_RE.test(email.value.trim()) ? '' : 'Enter an email like name@example.com';
+    showError(email, emailMsg);
+    if (emailMsg) errors.push({ field: 'email', message: emailMsg, type: email.value.trim() ? 'invalid_format' : 'required' });
+    $('#contact-success').hidden = true;
+    if (errors.length) {
+      for (const er of errors) core('form_error', { formId: contact.id, fieldName: er.field, errorMessage: er.message, errorType: er.type });
+      return;
+    }
+    const names = contactFields.filter(el => el.value.trim()).map(el => el.name);
+    core('form_submission', {
+      url: pageUrl(), formId: contact.id, formName: contact.getAttribute('name'), formAction: contact.action,
+      formMethod: 'POST', fieldCount: names.length, fieldNames: names, customProperties: { purpose: 'contact_form' },
+    });
+    contact.reset();
+    lastValue.clear();
+    $('#contact-success').hidden = false;
+  });
+
+  /* ---------- Section 1.2: video, downloads, outside links ---------- */
+  const video = $('#demo-video');
+  const videoMarks = new Set();
+  let videoStarted = false;
+  const watchedSeconds = () => { let s = 0; for (let i = 0; i < video.played.length; i++) s += video.played.end(i) - video.played.start(i); return Math.round(s); };
+  function videoProgress(mark) {
+    videoMarks.add(mark);
+    core('video_progress', { videoId: video.id, videoDuration: Math.round(video.duration || 0), currentTime: Math.round(video.currentTime), percentComplete: mark });
+  }
+  video.addEventListener('play', () => {
+    if (videoStarted) return;
+    videoStarted = true;
+    core('video_start', { videoId: video.id, videoTitle: video.dataset.title, videoUrl: video.currentSrc, videoDuration: Math.round(video.duration || 0), videoProvider: 'html5' });
+  });
+  video.addEventListener('timeupdate', () => {
+    if (!video.duration) return;
+    const pct = Math.floor(video.currentTime / video.duration * 100);
+    for (const m of [25, 50, 75, 100]) if (pct >= m && !videoMarks.has(m)) videoProgress(m);
+  });
+  video.addEventListener('ended', () => {
+    if (!videoMarks.has(100)) videoProgress(100);
+    core('video_end', { videoId: video.id, videoDuration: Math.round(video.duration || 0), watchedSeconds: watchedSeconds(), percentComplete: 100, completed: true });
+    videoStarted = false;
+    videoMarks.clear();
+  });
+  for (const a of $$('a[data-file]')) {
+    a.addEventListener('click', () => core('file_download', {
+      fileUrl: a.href, fileName: a.href.split('/').pop(), fileType: a.dataset.file, fileSize: Number(a.dataset.size),
+    }));
+  }
+  for (const a of $$('a[data-external]')) {
+    a.addEventListener('click', () => core('external_link_click', { fromUrl: location.href, externalUrl: a.href, linkText: a.textContent.replace(/new tab/, '').trim() }));
+  }
+
+  /* ---------- Dialogs (offer popup, quick view) ---------- */
+  const openDialogs = [];
+  const dialogInfo = {};
+  function openDialog(id, triggerType, opener) {
+    const box = document.getElementById(id);
+    box.parentElement.hidden = false;
+    box.setAttribute('aria-hidden', 'false');
+    dialogInfo[id] = { openedAt: Date.now(), opener };
+    openDialogs.push(id);
+    (box.querySelector('[data-autofocus]') || box.querySelector('.dialog-close')).focus();
+    core('modal_open', { modalId: id, modalName: box.dataset.modalName, triggerType });
+  }
+  function closeDialog(id, reason) {
+    const info = dialogInfo[id];
+    if (!info) return;
+    const box = document.getElementById(id);
+    box.setAttribute('aria-hidden', 'true');
+    box.parentElement.hidden = true;
+    delete dialogInfo[id];
+    openDialogs.splice(openDialogs.indexOf(id), 1);
+    core('modal_close', { modalId: id, modalName: box.dataset.modalName, timeOpenSeconds: seconds(Date.now() - info.openedAt), closeReason: reason });
+    if (info.opener && document.contains(info.opener)) info.opener.focus();
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && openDialogs.length) closeDialog(openDialogs[openDialogs.length - 1], 'escape_key');
+  });
+  for (const backdrop of $$('.backdrop')) {
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeDialog(backdrop.firstElementChild.id, 'outside_click'); });
+  }
+  document.addEventListener('click', e => {
+    const closer = e.target instanceof Element ? e.target.closest('[data-close]') : null;
+    if (closer) closeDialog(closer.closest('.dialog').id, closer.dataset.close);
+  });
+  $('#open-offer').addEventListener('click', e => openDialog('offer-modal', 'user_click', e.currentTarget));
+  $('#offer-claim').addEventListener('click', () => {
+    core('modal_action', { modalId: 'offer-modal', actionType: 'claim_offer', actionValue: 'SAVE10' });
+    closeDialog('offer-modal', 'user_click');
+    const couponInput = $('#coupon-input');
+    if (couponInput) couponInput.value = 'SAVE10';
+    toast('Code <b>SAVE10</b> is ready in the cart');
+  });
+
+  /* ---------- Products ---------- */
+  const CURRENCY = 'AUD';
+  const PRODUCTS = [
+    { id: 'SKU-TR-001', name: 'Trail Runner Sneaker', price: 129, original: 149, category: 'Footwear', subcategory: 'Running', brand: 'Umerang Lab',
+      stock: 14, rating: 4.6, reviews: 128, color: 'Ember', size: 'US 9', material: 'Recycled mesh', img: 'media/products/sku-tr-001.svg',
+      description: 'Lightweight trail shoe with a grippy outsole.' },
+    { id: 'SKU-JK-002', name: 'Storm Shell Jacket', price: 189, original: null, category: 'Apparel', subcategory: 'Outerwear', brand: 'Umerang Lab',
+      stock: 5, rating: 4.4, reviews: 64, color: 'Slate', size: 'M', material: 'Nylon', img: 'media/products/sku-jk-002.svg',
+      description: 'Packable waterproof shell for wet commutes.' },
+    { id: 'SKU-CP-003', name: 'Everyday Cap', price: 29, original: null, category: 'Accessories', subcategory: 'Headwear', brand: 'Umerang Lab',
+      stock: 40, rating: 4.8, reviews: 212, color: 'Mint', size: 'One size', material: 'Cotton twill', img: 'media/products/sku-cp-003.svg',
+      description: 'Six-panel cap with an adjustable strap.' },
+    { id: 'SKU-BT-004', name: 'Insulated Bottle', price: 39, original: 45, category: 'Accessories', subcategory: 'Drinkware', brand: 'Umerang Lab',
+      stock: 0, rating: 4.7, reviews: 88, color: 'Amber', size: '750 ml', material: 'Stainless steel', img: 'media/products/sku-bt-004.svg',
+      description: 'Keeps drinks cold for 24 hours. Out of stock, to test inStock: false.' },
+  ];
+  const productById = id => PRODUCTS.find(p => p.id === id);
+  const absUrl = rel => new URL(rel, location.href).href;
+  const LIST = { listType: 'category', listName: 'All products' };
+  const wishlist = new Set(store.get('wishlist', []));
+  const compare = new Set(store.get('compare', []));
+
+  function productCard(p, index) {
+    return '<article class="product" id="product-' + p.id + '" data-product-id="' + p.id + '" data-sku="' + p.id + '" data-price="' + p.price.toFixed(2) + '" data-position="' + (index + 1) + '"' +
+      ' itemscope itemtype="https://schema.org/Product">' +
+      '<button type="button" class="product-media" data-open="' + p.id + '" aria-label="Open ' + esc(p.name) + '"><img src="' + p.img + '" alt="" loading="lazy" width="800" height="600"></button>' +
+      '<div class="product-body">' +
+        '<h3 itemprop="name"><button type="button" class="link-btn" data-open="' + p.id + '">' + esc(p.name) + '</button></h3>' +
+        '<meta itemprop="sku" content="' + p.id + '">' +
+        '<p class="price" itemprop="offers" itemscope itemtype="https://schema.org/Offer"><meta itemprop="priceCurrency" content="' + CURRENCY + '">' +
+          '<span itemprop="price" content="' + p.price.toFixed(2) + '">' + fmt(p.price) + '</span>' + (p.original ? '<s>' + fmt(p.original) + '</s>' : '') + '</p>' +
+        '<p class="stock' + (p.stock ? '' : ' out') + '">' + (p.stock ? p.stock + ' in stock' : 'Out of stock') + '</p>' +
+        '<div class="product-actions">' +
+          '<button type="button" class="btn btn-primary btn-sm" data-add="' + p.id + '"' + (p.stock ? '' : ' disabled') + '>Add to cart</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-quickview="' + p.id + '">Quick view</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-wish="' + p.id + '" aria-pressed="' + wishlist.has(p.id) + '">' + (wishlist.has(p.id) ? '♥ Wishlist' : '♡ Wishlist') + '</button>' +
+          '<label class="check"><input type="checkbox" data-compare="' + p.id + '"' + (compare.has(p.id) ? ' checked' : '') + '> Compare</label>' +
+        '</div>' +
+      '</div></article>';
+  }
+  const grid = $('#product-grid');
+  grid.innerHTML = PRODUCTS.map(productCard).join('');
+
+  if ('IntersectionObserver' in window) {
+    const impressionObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        impressionObserver.unobserve(entry.target);
+        const p = productById(entry.target.dataset.productId);
+        send('product_impression', { ...LIST, productId: p.id, productName: p.name, productPrice: p.price, position: Number(entry.target.dataset.position) });
+      }
+    }, { threshold: 0.5 });
+    $$('.product', grid).forEach(el => impressionObserver.observe(el));
+  }
+
+  const viewedThisSession = new Set(store.get('viewed', [], true));
+  const reviewsSeen = new Set();
+  const detail = $('#product-detail');
+  function openDetail(id, fromList) {
+    const p = productById(id);
+    if (!p) return;
+    if (fromList) {
+      const card = document.getElementById('product-' + id);
+      send('product_click', { listType: LIST.listType, productId: p.id, productName: p.name, position: Number(card.dataset.position) });
+    }
+    detail.hidden = false;
+    detail.innerHTML =
+      '<img src="' + p.img + '" alt="' + esc(p.name) + '" width="800" height="600">' +
+      '<div class="detail-meta">' +
+        '<p class="section-label" style="margin:0">Product detail</p>' +
+        '<h3 style="font-size:1.6rem;margin:0">' + esc(p.name) + '</h3>' +
+        '<p class="price" style="font-size:1.2rem">' + fmt(p.price) + (p.original ? '<s>' + fmt(p.original) + '</s>' : '') + '</p>' +
+        '<p class="lede">' + esc(p.description) + '</p>' +
+        '<div class="facts-row"><span><b>SKU</b> ' + p.id + '</span><span><b>Rating</b> ' + p.rating + ' / 5</span><span><b>Stock</b> ' + (p.stock || 'none') + '</span><span><b>Category</b> ' + p.category + ' › ' + p.subcategory + '</span></div>' +
+        '<div class="form-grid">' +
+          '<div class="field"><label for="d-size">Size</label><select id="d-size"><option>' + esc(p.size) + '</option><option>Alternative size</option></select></div>' +
+          '<div class="field"><label for="d-qty">Quantity</label><input id="d-qty" type="number" min="1" max="9" value="1"></div>' +
+        '</div>' +
+        '<div class="actions-row"><button type="button" class="btn btn-primary" data-add-detail="' + p.id + '"' + (p.stock ? '' : ' disabled') + '>Add to cart</button>' +
+        '<button type="button" class="btn btn-ghost" data-reviews="' + p.id + '">Show reviews (' + p.reviews + ')</button></div>' +
+        '<div class="reviews" id="reviews-box" hidden>' +
+          '<div class="review"><b>Sam</b> · 5/5 · Comfortable from day one.</div>' +
+          '<div class="review"><b>Priya</b> · 4/5 · Runs slightly small; order a size up.</div>' +
+          '<form class="stack" id="review-form" novalidate>' +
+            '<div class="form-grid"><div class="field"><label for="r-rating">Your rating</label><select id="r-rating"><option value="5">5 — great</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1 — poor</option></select></div></div>' +
+            '<div class="field"><label for="r-text">Your review</label><textarea id="r-text" placeholder="Test review text"></textarea></div>' +
+            '<div><button type="submit" class="btn btn-ghost">Post review</button> <span class="err" id="r-err"></span></div>' +
+          '</form>' +
+        '</div>' +
+      '</div>';
+    detail.dataset.product = p.id;
+    if (!viewedThisSession.has(p.id)) {
+      viewedThisSession.add(p.id);
+      store.set('viewed', Array.from(viewedThisSession), true);
+      send('viewed_product', {
+        productId: p.id, productName: p.name, productUrl: pageUrl() + '#product-' + p.id, productPrice: p.price,
+        productPriceOriginal: p.original, productCurrency: CURRENCY, productCategory: p.category, productSubcategory: p.subcategory,
+        productBrand: p.brand, productImage: absUrl(p.img), productDescription: p.description, inventory: p.stock, inStock: p.stock > 0,
+        rating: p.rating, reviewCount: p.reviews, discount: p.original ? money(p.original - p.price) : 0, discountCode: null,
+        customProperties: { color: p.color, size: p.size, material: p.material },
+      });
+    } else {
+      toast('<b>viewed_product</b> already sent for this product in this session');
+    }
+    detail.scrollIntoView({ block: 'nearest' });
+  }
+
+  function toggleWishlist(p, button) {
+    if (wishlist.has(p.id)) {
+      wishlist.delete(p.id);
+      send('product_wishlist_remove', { productId: p.id, wishlistSize: wishlist.size });
+    } else {
+      wishlist.add(p.id);
+      send('product_wishlist_add', { productId: p.id, productName: p.name, productPrice: p.price, wishlistSize: wishlist.size });
+    }
+    store.set('wishlist', Array.from(wishlist));
+    for (const b of $$('[data-wish="' + p.id + '"]')) {
+      b.setAttribute('aria-pressed', String(wishlist.has(p.id)));
+      b.textContent = wishlist.has(p.id) ? '♥ Wishlist' : '♡ Wishlist';
+    }
+  }
+
+  function quickView(p, opener) {
+    send('product_quickview', { productId: p.id, productName: p.name });
+    $('#qv-body').innerHTML =
+      '<h3 id="qv-title">' + esc(p.name) + '</h3>' +
+      '<p>' + esc(p.description) + '</p>' +
+      '<p class="price" style="margin-bottom:1.2rem">' + fmt(p.price) + (p.original ? '<s>' + fmt(p.original) + '</s>' : '') + '</p>' +
+      '<div class="form-actions"><button type="button" class="btn btn-primary" data-autofocus data-add="' + p.id + '"' + (p.stock ? '' : ' disabled') + '>Add to cart</button>' +
+      '<button type="button" class="btn btn-secondary" data-qv-details="' + p.id + '">Full details</button></div>';
+    openDialog('quickview-modal', 'user_click', opener);
+  }
+
+  document.addEventListener('click', e => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (!el) return;
+    const open = el.closest('[data-open]');
+    if (open) return openDetail(open.dataset.open, true);
+    const add = el.closest('[data-add]');
+    if (add) return addToCart(productById(add.dataset.add), 1, null);
+    const addDetail = el.closest('[data-add-detail]');
+    if (addDetail) {
+      const qty = Math.min(9, Math.max(1, parseInt($('#d-qty').value, 10) || 1));
+      return addToCart(productById(addDetail.dataset.addDetail), qty, { size: $('#d-size').value });
+    }
+    const qv = el.closest('[data-quickview]');
+    if (qv) return quickView(productById(qv.dataset.quickview), qv);
+    const qvDetails = el.closest('[data-qv-details]');
+    if (qvDetails) { closeDialog('quickview-modal', 'user_click'); return openDetail(qvDetails.dataset.qvDetails, true); }
+    const wish = el.closest('[data-wish]');
+    if (wish) return toggleWishlist(productById(wish.dataset.wish), wish);
+    const reviews = el.closest('[data-reviews]');
+    if (reviews) {
+      const box = $('#reviews-box');
+      box.hidden = !box.hidden;
+      const p = productById(reviews.dataset.reviews);
+      if (!box.hidden && !reviewsSeen.has(p.id)) {
+        reviewsSeen.add(p.id);
+        send('product_review_view', { productId: p.id, reviewCount: p.reviews });
+      }
+      reviews.textContent = box.hidden ? 'Show reviews (' + p.reviews + ')' : 'Hide reviews';
+    }
+  });
+  document.addEventListener('change', e => {
+    const box = e.target instanceof Element ? e.target.closest('[data-compare]') : null;
+    if (!box) return;
+    if (box.checked) {
+      compare.add(box.dataset.compare);
+      send('product_compare', { productId: box.dataset.compare, comparisonListSize: compare.size });
+    } else {
+      compare.delete(box.dataset.compare);
+    }
+    store.set('compare', Array.from(compare));
+  });
+  document.addEventListener('submit', e => {
+    if (e.target.id !== 'review-form') return;
+    e.preventDefault();
+    const text = $('#r-text').value.trim();
+    if (!text) { $('#r-err').textContent = 'Write a few words first.'; return; }
+    $('#r-err').textContent = '';
+    send('product_review_submit', { productId: detail.dataset.product, rating: Number($('#r-rating').value), reviewLength: text.length });
+    e.target.reset();
+    toast('Review posted (test only)');
+  });
+
+  /* ---------- Cart ---------- */
+  const COUPONS = { SAVE10: 0.10, TEST20: 0.20 };
+  let cart = store.get('cart', null) || { id: rid('cart'), items: [], coupon: null };
+  const saveCart = () => store.set('cart', cart);
+  function totals() {
+    const subtotal = money(cart.items.reduce((s, i) => s + i.price * i.qty, 0));
+    const discount = cart.coupon ? money(subtotal * COUPONS[cart.coupon]) : 0;
+    return { subtotal, discount, value: money(subtotal - discount), count: cart.items.reduce((s, i) => s + i.qty, 0) };
+  }
+  const cartLines = () => cart.items.map(i => ({ productId: i.productId, productName: i.name, productPrice: i.price, quantity: i.qty }));
+  function addToCart(p, qty, options) {
+    if (!p || !p.stock) return;
+    const opts = options || { size: p.size };
+    const line = cart.items.find(i => i.productId === p.id && i.options.size === opts.size);
+    if (line) line.qty += qty;
+    else cart.items.push({ productId: p.id, name: p.name, price: p.price, qty, options: opts });
+    saveCart();
+    const t = totals();
+    send('added_to_cart', {
+      cartId: cart.id, productId: p.id, productName: p.name, productPrice: p.price, quantity: qty,
+      cartValue: t.value, cartItemCount: t.count, currency: CURRENCY, customProperties: { ...opts, color: p.color },
+    });
+    renderCart();
+  }
+  function changeQty(index, delta) {
+    const line = cart.items[index];
+    if (!line) return;
+    const oldQty = line.qty;
+    const newQty = Math.max(0, Math.min(9, oldQty + delta));
+    if (newQty === oldQty) return;
+    if (newQty === 0) return removeLine(index);
+    line.qty = newQty;
+    saveCart();
+    send('quantity_changed', { cartId: cart.id, productId: line.productId, oldQuantity: oldQty, newQuantity: newQty, cartValue: totals().value });
+    renderCart();
+  }
+  function removeLine(index) {
+    const [line] = cart.items.splice(index, 1);
+    if (!line) return;
+    if (!cart.items.length) cart.coupon = null;
+    saveCart();
+    const t = totals();
+    send('removed_from_cart', { cartId: cart.id, productId: line.productId, productName: line.name, quantity: line.qty, cartValue: t.value, cartItemCount: t.count });
+    renderCart();
+  }
+  function renderCart() {
+    const t = totals();
+    $('#nav-cart-count').textContent = t.count ? '(' + t.count + ')' : '';
+    const panelEl = $('#cart-panel');
+    if (!cart.items.length) {
+      panelEl.innerHTML = '<p class="empty-note">Your cart is empty. Add something from the shop.</p>' +
+        '<div class="coupon-row"><label class="sr-only" for="coupon-input">Coupon code</label><input id="coupon-input" placeholder="Coupon code" disabled></div>';
+      renderCheckout();
+      return;
+    }
+    panelEl.innerHTML =
+      '<div class="table-scroll"><table class="cart-table"><thead><tr><th>Product</th><th>Quantity</th><th class="num">Price</th><th class="num">Total</th><th><span class="sr-only">Remove</span></th></tr></thead><tbody>' +
+      cart.items.map((i, n) =>
+        '<tr><td>' + esc(i.name) + '<br><span class="small">' + esc(i.options.size || '') + '</span></td>' +
+        '<td><span class="qty"><button type="button" data-qty="' + n + '" data-delta="-1" aria-label="One fewer ' + esc(i.name) + '">−</button><span>' + i.qty + '</span>' +
+        '<button type="button" data-qty="' + n + '" data-delta="1" aria-label="One more ' + esc(i.name) + '">+</button></span></td>' +
+        '<td class="num">' + fmt(i.price) + '</td><td class="num">' + fmt(i.price * i.qty) + '</td>' +
+        '<td><button type="button" class="btn btn-danger btn-sm" data-remove="' + n + '">Remove</button></td></tr>').join('') +
+      '</tbody></table></div>' +
+      '<div class="coupon-row">' +
+        (cart.coupon
+          ? '<span>Coupon <code>' + cart.coupon + '</code> applied</span><button type="button" class="btn btn-ghost btn-sm" id="coupon-remove">Remove coupon</button>'
+          : '<label class="sr-only" for="coupon-input">Coupon code</label><input id="coupon-input" placeholder="Coupon code" autocomplete="off"><button type="button" class="btn btn-ghost btn-sm" id="coupon-apply">Apply</button>') +
+        '<span class="err" id="coupon-err"></span>' +
+      '</div>' +
+      '<div class="totals"><span>Subtotal ' + fmt(t.subtotal) + '</span>' + (t.discount ? '<span>Discount −' + fmt(t.discount) + '</span>' : '') +
+        '<span class="grand">' + fmt(t.value) + ' ' + CURRENCY + '</span>' +
+        '<button type="button" class="btn btn-primary" id="start-checkout" style="margin-top:.6rem">Checkout</button></div>';
+    renderCheckout();
+  }
+  $('#cart-panel').addEventListener('click', e => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (!el) return;
+    const q = el.closest('[data-qty]');
+    if (q) return changeQty(Number(q.dataset.qty), Number(q.dataset.delta));
+    const r = el.closest('[data-remove]');
+    if (r) return removeLine(Number(r.dataset.remove));
+    if (el.closest('#coupon-apply')) {
+      const code = $('#coupon-input').value.trim().toUpperCase();
+      if (!COUPONS[code]) { $('#coupon-err').textContent = code ? 'Code not recognised. Try SAVE10 or TEST20.' : 'Enter a code first.'; return; }
+      const before = totals().value;
+      cart.coupon = code;
+      saveCart();
+      const after = totals();
+      send('coupon_applied', { cartId: cart.id, couponCode: code, discountAmount: after.discount, cartValueBefore: before, cartValueAfter: after.value });
+      return renderCart();
+    }
+    if (el.closest('#coupon-remove')) {
+      const code = cart.coupon;
+      cart.coupon = null;
+      saveCart();
+      send('coupon_removed', { cartId: cart.id, couponCode: code });
+      return renderCart();
+    }
+    if (el.closest('#start-checkout')) startCheckout();
+  });
+  if ('IntersectionObserver' in window) {
+    const cartObserver = new IntersectionObserver(entries => {
+      if (!entries.some(en => en.isIntersecting)) return;
+      cartObserver.disconnect();
+      const t = totals();
+      send('cart_view', { cartId: cart.id, cartValue: t.value, cartItemCount: t.count, products: cartLines() });
+    }, { threshold: 0.4 });
+    cartObserver.observe($('#cart-panel'));
+  }
+
+  /* ---------- Checkout ---------- */
+  const SHIPPING = { standard: { label: 'Standard (3–5 days)', cost: 9.95 }, express: { label: 'Express (next day)', cost: 19.95 }, pickup: { label: 'Store pickup', cost: 0 } };
+  const PAYMENTS = { credit_card: 'Credit card', paypal: 'PayPal', apple_pay: 'Apple Pay', google_pay: 'Google Pay' };
+  let checkout = null;
+  let lastOrder = null;
+  function startCheckout() {
+    if (!cart.items.length) return;
+    const t = totals();
+    checkout = { id: rid('chk'), step: 1, stepStartedAt: Date.now(), billing: null, billingSent: false, shipping: null, payment: null };
+    lastOrder = null;
+    send('started_checkout', { checkoutId: checkout.id, cartValue: t.value, cartItemCount: t.count, cartItems: cartLines(), currency: CURRENCY, checkoutUrl: pageUrl() + '#checkout' });
+    renderCheckout();
+    $('#checkout').scrollIntoView();
+  }
+  function stepDone(step, name) {
+    send('checkout_step', { checkoutId: checkout.id, stepNumber: step, stepName: name, stepDuration: seconds(Date.now() - checkout.stepStartedAt) });
+    checkout.step = step + 1;
+    checkout.stepStartedAt = Date.now();
+  }
+  function checkoutError(step, field, message, type) {
+    send('checkout_error', { checkoutId: checkout.id, stepNumber: step, fieldName: field, errorMessage: message, errorType: type });
+  }
+  function renderCheckout() {
+    const el = $('#checkout-panel');
+    if (lastOrder) {
+      el.innerHTML = '<h3>Order placed</h3><p class="success" style="margin-top:0">Order <code>' + lastOrder.orderId + '</code> for ' + fmt(lastOrder.orderValue) + ' ' + CURRENCY +
+        '. That fired <code>placed_order</code>. Nothing was charged.</p>' +
+        '<p class="note" style="margin-top:1rem"><code>order_completed</code>, <code>order_refund</code>, <code>order_return</code> and <code>repeat_purchase</code> come from the backend once the order moves on.</p>';
+      return;
+    }
+    if (!checkout) {
+      el.innerHTML = '<p class="empty-note">' + (cart.items.length ? 'Press Checkout in the cart to start.' : 'Add something to the cart, then press Checkout.') + '</p>';
+      return;
+    }
+    const steps = ['Billing', 'Shipping', 'Payment'];
+    const stepper = '<ol class="stepper">' + steps.map((s, i) => '<li class="' + (i + 1 < checkout.step ? 'done' : i + 1 === checkout.step ? 'active' : '') + '">' + (i + 1) + '. ' + s + '</li>').join('') + '</ol>';
+    let body = '';
+    if (checkout.step === 1) {
+      const b = checkout.billing || {};
+      body = '<form id="billing-form" novalidate><div class="form-grid">' +
+        '<div class="field"><label for="b-name">Full name *</label><input id="b-name" name="name" value="' + esc(b.name || '') + '" autocomplete="name"><span class="err" id="b-name-err"></span></div>' +
+        '<div class="field"><label for="b-email">Email *</label><input id="b-email" name="email" type="email" value="' + esc(b.email || '') + '" autocomplete="email"><span class="err" id="b-email-err"></span></div>' +
+        '<div class="field"><label for="b-country">Country *</label><select id="b-country" name="country">' +
+          ['', 'AU', 'NZ', 'US', 'GB'].map(c => '<option value="' + c + '"' + (b.country === c ? ' selected' : '') + '>' + (c || 'Choose a country') + '</option>').join('') +
+        '</select><span class="err" id="b-country-err"></span></div>' +
+        '<div class="field"><label for="b-state">State or region *</label><input id="b-state" name="state" value="' + esc(b.state || '') + '"><span class="err" id="b-state-err"></span></div>' +
+        '<div class="field"><label for="b-city">City *</label><input id="b-city" name="city" value="' + esc(b.city || '') + '" autocomplete="address-level2"><span class="err" id="b-city-err"></span></div>' +
+        '<div class="field"><label for="b-zip">Postcode *</label><input id="b-zip" name="zipCode" value="' + esc(b.zipCode || '') + '" autocomplete="postal-code"><span class="err" id="b-zip-err"></span></div>' +
+        '</div><div class="form-actions"><button type="submit" class="btn btn-primary">Continue to shipping</button></div></form>';
+    } else if (checkout.step === 2) {
+      body = '<form id="shipping-form" novalidate><div class="options">' +
+        Object.entries(SHIPPING).map(([k, s]) => '<label class="option"><input type="radio" name="ship" value="' + k + '"' + (checkout.shipping === k ? ' checked' : '') + '>' + s.label + '<small>' + fmt(s.cost) + '</small></label>').join('') +
+        '</div><p class="err" id="ship-err"></p><div class="form-actions"><button type="submit" class="btn btn-primary">Continue to payment</button></div></form>';
+    } else {
+      const t = totals();
+      const shipCost = SHIPPING[checkout.shipping].cost;
+      const before = money(t.value + shipCost);
+      body = '<form id="payment-form" novalidate><div class="options">' +
+        Object.entries(PAYMENTS).map(([k, label]) => '<label class="option"><input type="radio" name="pay" value="' + k + '"' + (checkout.payment === k ? ' checked' : '') + '>' + label + '</label>').join('') +
+        '</div><p class="err" id="pay-err"></p>' +
+        '<p class="note" style="margin-top:1rem">Test mode: no card or account details are asked for. Placing the order only sends tracking events.</p>' +
+        '<div class="totals"><span>Items ' + fmt(t.value) + '</span><span>Shipping ' + fmt(shipCost) + '</span><span>Tax (10%) ' + fmt(money(before * 0.1)) + '</span>' +
+        '<span class="grand">' + fmt(money(before * 1.1)) + ' ' + CURRENCY + '</span><button type="submit" class="btn btn-primary" style="margin-top:.6rem">Place order</button></div></form>';
+    }
+    el.innerHTML = stepper + body;
+  }
+  $('#checkout-panel').addEventListener('change', e => {
+    if (!checkout) return;
+    if (e.target.name === 'ship') {
+      checkout.shipping = e.target.value;
+      send('shipping_method_selected', { checkoutId: checkout.id, shippingMethod: e.target.value, shippingCost: SHIPPING[e.target.value].cost });
+    } else if (e.target.name === 'pay') {
+      checkout.payment = e.target.value;
+      send('payment_method_selected', { checkoutId: checkout.id, paymentMethod: e.target.value });
+    }
+  });
+  $('#checkout-panel').addEventListener('submit', e => {
+    e.preventDefault();
+    if (!checkout) return;
+    const form = e.target;
+    if (form.id === 'billing-form') {
+      const fields = [['b-name', 'name', 'Full name'], ['b-email', 'email', 'Email'], ['b-country', 'country', 'Country'], ['b-state', 'state', 'State or region'], ['b-city', 'city', 'City'], ['b-zip', 'zipCode', 'Postcode']];
+      const values = {};
+      let failed = false;
+      for (const [id, key, label] of fields) {
+        const input = document.getElementById(id);
+        const v = input.value.trim();
+        values[key] = v;
+        let msg = v ? '' : label + ' is required';
+        let type = 'required';
+        if (!msg && key === 'email' && !EMAIL_RE.test(v)) { msg = 'Enter an email like name@example.com'; type = 'invalid_format'; }
+        showError(input, msg);
+        if (msg) { failed = true; checkoutError(1, key, msg, type); }
+      }
+      checkout.billing = values;
+      if (failed) return;
+      if (!checkout.billingSent) {
+        checkout.billingSent = true;
+        send('billing_address_entered', { checkoutId: checkout.id, country: values.country, state: values.state });
+      }
+      stepDone(1, 'billing');
+    } else if (form.id === 'shipping-form') {
+      if (!checkout.shipping) { $('#ship-err').textContent = 'Choose a shipping method.'; checkoutError(2, 'shippingMethod', 'Choose a shipping method', 'required'); return; }
+      stepDone(2, 'shipping');
+    } else if (form.id === 'payment-form') {
+      if (!checkout.payment) { $('#pay-err').textContent = 'Choose a payment method.'; checkoutError(3, 'paymentMethod', 'Choose a payment method', 'required'); return; }
+      stepDone(3, 'payment');
+      placeOrder();
+      return;
+    }
+    renderCheckout();
+  });
+  function placeOrder() {
+    const t = totals();
+    const shipCost = SHIPPING[checkout.shipping].cost;
+    const before = money(t.value + shipCost);
+    const tax = money(before * 0.1);
+    const after = money(before + tax);
+    const b = checkout.billing;
+    const address = { country: b.country, state: b.state, city: b.city, zipCode: b.zipCode };
+    const utm = utmParams();
+    const medium = (utm.utmMedium || '').toLowerCase();
+    const source = medium === 'email' ? 'email' : /^(cpc|ppc|paid)$/.test(medium) ? 'paid_ad' : document.referrer ? 'referral' : 'direct';
+    const orderId = 'ORD-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    send('placed_order', {
+      orderId, orderValue: after, orderValueBeforeTax: before, orderValueAfterTax: after, tax, shipping: shipCost, discount: t.discount,
+      currency: CURRENCY, paymentMethod: checkout.payment, cartItems: cartLines(), itemCount: t.count,
+      shippingAddress: address, billingAddress: address, couponCode: cart.coupon, attributionCampaignId: utm.utmCampaign,
+      attributionSource: source, ...utm,
+    });
+    lastOrder = { orderId, orderValue: after };
+    checkout = null;
+    cart = { id: rid('cart'), items: [], coupon: null };
+    saveCart();
+    renderCart();
+  }
+
+  /* ---------- Subscriptions ---------- */
+  const PLANS = { basic: { name: 'Basic', monthly: 9, blurb: 'One club, core features.' }, plus: { name: 'Plus', monthly: 19, blurb: 'Three clubs and email campaigns.' }, pro: { name: 'Pro', monthly: 39, blurb: 'Unlimited clubs and priority support.' } };
+  const ORDER = ['basic', 'plus', 'pro'];
+  let sub = store.get('sub', null);
+  function renderPlans() {
+    $('#plans').innerHTML = ORDER.map(key => {
+      const p = PLANS[key];
+      const current = sub && sub.plan === key;
+      let action;
+      if (!sub) action = '<button type="button" class="btn btn-primary btn-sm" data-plan="' + key + '">Subscribe to ' + p.name + '</button>';
+      else if (current) action = '<button type="button" class="btn btn-ghost btn-sm" disabled>Your plan</button>';
+      else action = '<button type="button" class="btn btn-ghost btn-sm" data-plan="' + key + '">' + (ORDER.indexOf(key) > ORDER.indexOf(sub.plan) ? 'Move up to ' : 'Move down to ') + p.name + '</button>';
+      return '<div class="plan' + (current ? ' current' : '') + '"><h3>' + p.name + '</h3><p class="amount">$' + p.monthly + ' <small>/ month</small></p><p>' + p.blurb + '</p>' + action + '</div>';
+    }).join('');
+    $('#sub-bar').innerHTML = sub
+      ? '<div class="field"><label for="cancel-reason">Reason for cancelling</label><select id="cancel-reason"><option value="too_expensive">Too expensive</option><option value="not_using">Not using it</option><option value="missing_features">Missing features</option><option value="other">Other</option></select></div>' +
+        '<button type="button" class="btn btn-danger" id="cancel-sub">Cancel subscription</button><span class="small">Subscription <code>' + sub.id + '</code>, started ' + new Date(sub.startedAt).toLocaleDateString() + '.</span>'
+      : '<span class="small">No active subscription.</span>';
+  }
+  document.addEventListener('click', e => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (!el) return;
+    const choose = el.closest('[data-plan]');
+    if (choose) {
+      const key = choose.dataset.plan;
+      const next = PLANS[key];
+      if (!sub) {
+        sub = { id: rid('sub'), plan: key, startedAt: Date.now() };
+        send('subscription_start', { subscriptionId: sub.id, subscriptionName: next.name, frequency: 'monthly', monthlyValue: next.monthly, subscriptionLength: '12 months' });
+      } else {
+        const old = PLANS[sub.plan];
+        if (ORDER.indexOf(key) > ORDER.indexOf(sub.plan)) {
+          send('subscription_upgrade', { subscriptionId: sub.id, oldPlan: old.name, newPlan: next.name, oldMonthlyValue: old.monthly, newMonthlyValue: next.monthly, upgrDelta: next.monthly - old.monthly });
+        } else {
+          send('subscription_downgrade', { subscriptionId: sub.id, oldPlan: old.name, newPlan: next.name, downgradeDelta: old.monthly - next.monthly });
+        }
+        sub.plan = key;
+      }
+      store.set('sub', sub);
+      return renderPlans();
+    }
+    if (el.closest('#cancel-sub') && sub) {
+      const months = Math.floor((Date.now() - sub.startedAt) / (30 * 86400000));
+      send('subscription_cancel', {
+        subscriptionId: sub.id, subscriptionDurationMonths: months, cancelReason: $('#cancel-reason').value,
+        lifeTimeValue: PLANS[sub.plan].monthly * (months + 1),
+      });
+      sub = null;
+      store.set('sub', null);
+      renderPlans();
+    }
+  });
+
+  /* ---------- Account ---------- */
+  let user = store.get('user', null);
+  const saveUser = () => store.set('user', user);
+  function renderAccount() {
+    const loggedIn = user && user.loggedIn;
+    const who = loggedIn
+      ? '<div class="user-card"><div class="avatar">' + esc((user.firstName || user.email || '?')[0].toUpperCase()) + '</div><div><b>' + esc([user.firstName, user.lastName].filter(Boolean).join(' ') || 'Signed in') + '</b><span>' + esc(user.email) + ' · <code>' + esc(user.customerId) + '</code></span></div></div>'
+      : '<p class="empty-note" style="padding-top:0">Not signed in. Events below still send, but without customer details.</p>';
+    $('#account-grid').innerHTML =
+      '<div class="panel"><h3>Sign up</h3><form class="stack" id="signup-form" novalidate><div class="form-grid">' +
+        '<div class="field"><label for="s-first">First name *</label><input id="s-first" autocomplete="given-name"><span class="err" id="s-first-err"></span></div>' +
+        '<div class="field"><label for="s-last">Last name *</label><input id="s-last" autocomplete="family-name"><span class="err" id="s-last-err"></span></div>' +
+        '<div class="field full"><label for="s-email">Email *</label><input id="s-email" type="email" autocomplete="email"><span class="err" id="s-email-err"></span></div>' +
+        '<div class="field"><label for="s-phone">Phone</label><input id="s-phone" type="tel" autocomplete="tel" placeholder="Optional"></div>' +
+        '<div class="field"><label for="s-pass">Password *</label><input id="s-pass" type="password" autocomplete="new-password" placeholder="8+ characters"><span class="err" id="s-pass-err"></span></div>' +
+      '</div><div><button type="submit" class="btn btn-primary">Create account</button></div></form></div>' +
+      '<div class="panel"><h3>Log in</h3><form class="stack" id="login-form" novalidate>' +
+        '<div class="field"><label for="l-email">Email *</label><input id="l-email" type="email" autocomplete="email"><span class="err" id="l-email-err"></span></div>' +
+        '<div class="field"><label for="l-pass">Password *</label><input id="l-pass" type="password" autocomplete="current-password"><span class="err" id="l-pass-err"></span></div>' +
+        '<div class="actions-row"><button type="submit" class="btn btn-primary">Log in</button><button type="button" class="btn btn-ghost" id="reset-pass">Forgot password?</button></div>' +
+      '</form></div>' +
+      '<div class="panel"><h3>Your profile</h3>' + who +
+        '<form class="stack" id="profile-form" novalidate><div class="form-grid">' +
+          '<div class="field"><label for="p-first">First name</label><input id="p-first" value="' + esc(user ? user.firstName || '' : '') + '"></div>' +
+          '<div class="field"><label for="p-last">Last name</label><input id="p-last" value="' + esc(user ? user.lastName || '' : '') + '"></div>' +
+          '<div class="field full"><label for="p-phone">Phone</label><input id="p-phone" type="tel" value="' + esc(user ? user.phone || '' : '') + '"></div>' +
+        '</div><div class="actions-row"><button type="submit" class="btn btn-ghost">Save profile</button>' +
+        '<button type="button" class="btn btn-ghost" id="confirm-email">Confirm email</button>' +
+        '<button type="button" class="btn btn-ghost" id="confirm-phone">Confirm phone</button>' +
+        '<button type="button" class="btn btn-danger" id="log-out"' + (loggedIn ? '' : ' disabled') + '>Log out</button></div></form></div>' +
+      '<div class="panel"><h3>Email and privacy</h3><div class="stack">' +
+        '<div class="form-grid"><div class="field"><label for="unsub-list">Email list</label><select id="unsub-list"><option value="newsletter">Newsletter</option><option value="promotions">Promotions</option><option value="product_updates">Product updates</option></select></div>' +
+        '<div class="field" style="justify-content:end"><button type="button" class="btn btn-ghost" id="unsubscribe">Unsubscribe</button></div></div>' +
+        '<p class="label">Consent</p>' +
+        ['marketing', 'analytics', 'tracking'].map(k => '<label class="check"><input type="checkbox" data-consent="' + k + '"' + ((user && user.consent && user.consent[k] === false) ? '' : ' checked') + '> ' + k[0].toUpperCase() + k.slice(1) + '</label>').join('') +
+        '<p class="small">Changing these only sends <code>consent_update</code>; it does not switch the collector off.</p>' +
+      '</div></div>';
+  }
+  function requireFields(pairs) {
+    let ok = true;
+    for (const [id, msg, test] of pairs) {
+      const el = document.getElementById(id);
+      const bad = test ? !test(el.value.trim()) : !el.value.trim();
+      showError(el, bad ? msg : '');
+      if (bad) ok = false;
+    }
+    return ok;
+  }
+  document.addEventListener('submit', async e => {
+    const form = e.target;
+    if (form.id === 'signup-form') {
+      e.preventDefault();
+      if (!requireFields([['s-first', 'First name is required'], ['s-last', 'Last name is required'],
+        ['s-email', 'Enter an email like name@example.com', v => EMAIL_RE.test(v)], ['s-pass', 'Use at least 8 characters', v => v.length >= 8]])) return;
+      const phone = $('#s-phone').value.trim();
+      user = { customerId: rid('cust'), firstName: $('#s-first').value.trim(), lastName: $('#s-last').value.trim(), email: $('#s-email').value.trim(), phone, loggedIn: true, consent: { marketing: true, analytics: true, tracking: true } };
+      saveUser();
+      identify({ email: user.email, phone: phone || null, phoneHash: phone ? await sha256(phone) : null, customerId: user.customerId, firstName: user.firstName, lastName: user.lastName, identityType: 'email', source: 'form_submission' });
+      send('account_created', { signupSource: 'website' });
+      renderAccount();
+    } else if (form.id === 'login-form') {
+      e.preventDefault();
+      if (!requireFields([['l-email', 'Enter an email like name@example.com', v => EMAIL_RE.test(v)], ['l-pass', 'Enter your password']])) return;
+      const email = $('#l-email').value.trim();
+      if (!user || user.email !== email) user = { customerId: rid('cust'), firstName: '', lastName: '', email, phone: '', consent: { marketing: true, analytics: true, tracking: true } };
+      user.loggedIn = true;
+      saveUser();
+      identify({ email: user.email, customerId: user.customerId, firstName: user.firstName || null, lastName: user.lastName || null, identityType: 'email', source: 'form_submission' });
+      send('login', { loginMethod: 'password' });
+      renderAccount();
+    } else if (form.id === 'profile-form') {
+      e.preventDefault();
+      const next = { firstName: $('#p-first').value.trim(), lastName: $('#p-last').value.trim(), phone: $('#p-phone').value.trim() };
+      const current = user || {};
+      const changed = Object.keys(next).filter(k => (current[k] || '') !== next[k]);
+      if (!changed.length) { toast('Change a field first'); return; }
+      if (user) { Object.assign(user, next); saveUser(); }
+      send('profile_update', { updatedFields: changed, source: 'website' });
+      renderAccount();
+    }
+  });
+  $('#account-grid').addEventListener('click', e => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (!el) return;
+    if (el.closest('#reset-pass')) send('password_reset', { resetMethod: 'email' });
+    else if (el.closest('#confirm-email')) send('email_confirmed', {});
+    else if (el.closest('#confirm-phone')) {
+      if (!user || !user.phone) { toast('Add a phone number to your profile first', true); return; }
+      send('phone_confirmed', {});
+    } else if (el.closest('#log-out')) {
+      send('logout', {});
+      if (user) { user.loggedIn = false; saveUser(); }
+      renderAccount();
+    } else if (el.closest('#unsubscribe')) send('email_unsubscribe', { emailList: $('#unsub-list').value });
+  });
+  $('#account-grid').addEventListener('change', e => {
+    const box = e.target instanceof Element ? e.target.closest('[data-consent]') : null;
+    if (!box) return;
+    if (user) { user.consent = user.consent || {}; user.consent[box.dataset.consent] = box.checked; saveUser(); }
+    send('consent_update', { consentType: box.dataset.consent, consentStatus: box.checked });
+  });
+
+  /* ---------- Custom events ---------- */
+  const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+  $('#custom-example').innerHTML = CATALOG.customExamples.map(n => '<option>' + esc(n) + '</option>').join('');
+  $('#custom-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const typed = $('#custom-name').value.trim();
+    const name = typed || $('#custom-example').value;
+    const err = $('#custom-err');
+    if (!NAME_RE.test(name)) { err.textContent = 'Start with a letter and use only letters, numbers, _ or - (up to 64 characters).'; return; }
+    if (BY_NAME.has(name)) { err.textContent = '“' + name + '” is a catalog event. Pick a merchant-defined name instead.'; return; }
+    err.textContent = '';
+    if (!state.customSent.includes(name)) { state.customSent.push(name); saveCoverage(); }
+    send(name, { sentFrom: 'umerang-lab', example: !typed });
+  });
+
+  /* ---------- Search ---------- */
+  const SEARCH_INDEX = [
+    ...PRODUCTS.map(p => ({ title: p.name, desc: p.category + ' · ' + fmt(p.price), url: '#product-' + p.id })),
+    { title: 'Shipping and delivery', desc: 'Standard, express and pickup options', url: '#checkout' },
+    { title: 'Membership plans', desc: 'Basic, Plus and Pro subscriptions', url: '#subscriptions' },
+    { title: 'Create an account', desc: 'Sign up, log in and manage your profile', url: '#account' },
+    { title: 'Contact support', desc: 'Send us a message', url: '#forms' },
+    { title: 'Product video', desc: 'Watch the sample clip', url: '#media' },
+    { title: 'Returns and refunds', desc: 'Handled by the backend', url: '#backend' },
+  ];
+  const query = (new URLSearchParams(location.search).get('q') || '').trim();
+  if (query) {
+    $('#q').value = query;
+    const terms = query.toLowerCase().split(/\s+/);
+    const results = SEARCH_INDEX.filter(r => terms.every(t => (r.title + ' ' + r.desc).toLowerCase().includes(t)));
+    $('#results').innerHTML = results.length
+      ? results.map((r, i) => '<a class="result" href="' + r.url + '" data-search-result data-search-position="' + (i + 1) + '"><b><span class="pos">#' + (i + 1) + '</span>' + esc(r.title) + '</b><span>' + esc(r.desc) + '</span></a>').join('')
+      : '<p class="empty-note">No results for “' + esc(query) + '”. That still counts as a search with 0 results.</p>';
+    core('search', { searchQuery: query, searchCategory: 'all', resultCount: results.length });
+    $('#results').addEventListener('click', e => {
+      const a = e.target instanceof Element ? e.target.closest('.result') : null;
+      if (!a) return;
+      core('search_result_click', { searchQuery: query, resultPosition: Number(a.dataset.searchPosition), resultTitle: $('b', a).lastChild.textContent, resultUrl: a.href });
+    });
+  }
+  function openFromHash() {
+    const m = location.hash.match(/^#product-(SKU-[A-Z]{2}-\d{3})$/);
+    if (m) openDetail(m[1], false);
+  }
+  addEventListener('hashchange', openFromHash);
+
+  /* ---------- Backend-only list ---------- */
+  $('#backend-list').innerHTML = CATALOG.events.filter(e => e.serverSide)
+    .map(e => '<div class="backend-item"><code>' + esc(e.name) + '</code><p>' + esc(e.trigger) + '</p></div>').join('');
+
+  /* ---------- Start ---------- */
+  renderCart();
+  renderPlans();
+  renderAccount();
+  renderAll();
+  openFromHash();
+  for (const b of window.__ulabTap.batches) onBatch(b);
+  window.__ulabTap.listeners.push(onBatch);
+})();
+</script>
+</body>
+</html>

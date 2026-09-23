@@ -1,0 +1,70 @@
+section,group,event,trigger,frequency,server_side,field_count
+1 Core Events,Session & Navigation Events,session_start,First page view of new session (after 30-min inactivity or new day),Once per session,no,10
+1 Core Events,Session & Navigation Events,page_view,User loads a new page or route changes (SPA),Once per unique page per session,no,27
+1 Core Events,Session & Navigation Events,page_view_end,User leaves page (navigation or unload),Once per page view,no,9
+1 Core Events,Session & Navigation Events,navigation,User clicks to navigate (internal link),Per internal navigation click,no,9
+1 Core Events,Session & Navigation Events,scroll,"User scrolls to a new depth (triggers at 25%, 50%, 75%, 100%)",Per scroll milestone,no,6
+1 Core Events,Session & Navigation Events,visibility_change,Browser tab comes into focus or goes into background,Per visibility change,no,5
+1 Core Events,Interaction Events,click,User clicks any element,Per click,no,11
+1 Core Events,Interaction Events,form_focus,User focuses on form field,Per field focus,no,8
+1 Core Events,Interaction Events,form_blur,User leaves form field,Per field blur,no,8
+1 Core Events,Interaction Events,form_change,User modifies form field,Per field change,no,8
+1 Core Events,Interaction Events,form_submission,User submits form,Per form submission,no,11
+1 Core Events,Interaction Events,form_error,Form validation error occurs,Per error,no,7
+1 Core Events,Interaction Events,input_change,User types in text field (debounced),Per 500ms of continuous typing,no,7
+1 Core Events,Interaction Events,search,User performs site search,Per search query,no,7
+1 Core Events,Interaction Events,search_result_click,User clicks on search result,Per result click,no,7
+1 Core Events,Interaction Events,video_start,User starts playing video,Per video play,no,8
+1 Core Events,Interaction Events,video_progress,"User watches video milestone (25%, 50%, 75%, 100%)",Per milestone,no,7
+1 Core Events,Interaction Events,video_end,Video ends or user stops watching,Once per video,no,8
+1 Core Events,Interaction Events,file_download,User downloads file,Per download,no,7
+1 Core Events,Interaction Events,external_link_click,User clicks link to external site,Per click,no,6
+1 Core Events,Interaction Events,modal_open,Modal or popup opens,Per modal open,no,6
+1 Core Events,Interaction Events,modal_close,Modal or popup closes,Per modal close,no,7
+1 Core Events,Interaction Events,modal_action,"User takes action inside modal (e.g., subscribes, buys)",Per action,no,6
+1 Core Events,Interaction Events,element_view,Element becomes visible in viewport (lazy loading),Per element,no,7
+1 Core Events,Interaction Events,print,User prints page,Per print,no,5
+2 E-Commerce Events,Product Events,viewed_product,User views product detail page,Once per product view per session,no,24
+2 E-Commerce Events,Product Events,product_impression,Product appears in product list/search results,Per product displayed,no,9
+2 E-Commerce Events,Product Events,product_click,User clicks product in list (navigates to detail page),Per click,no,7
+2 E-Commerce Events,Product Events,product_quickview,User opens product quickview modal,Per quickview,no,5
+2 E-Commerce Events,Product Events,product_compare,User adds product to comparison list,Per product added,no,5
+2 E-Commerce Events,Product Events,product_review_view,User views product reviews,Once per product,no,5
+2 E-Commerce Events,Product Events,product_review_submit,User submits product review,Per review,no,8
+2 E-Commerce Events,Product Events,product_wishlist_add,User adds product to wishlist,Per product,no,9
+2 E-Commerce Events,Product Events,product_wishlist_remove,User removes product from wishlist,Per product,no,5
+2 E-Commerce Events,Cart Events,added_to_cart,User adds item to shopping cart,Per item added,no,15
+2 E-Commerce Events,Cart Events,removed_from_cart,User removes item from cart,Per item removed,no,9
+2 E-Commerce Events,Cart Events,quantity_changed,User updates item quantity in cart,Per quantity change,no,8
+2 E-Commerce Events,Cart Events,coupon_applied,User applies coupon code to cart,Per coupon,no,8
+2 E-Commerce Events,Cart Events,coupon_removed,User removes coupon code,Per coupon removal,no,5
+2 E-Commerce Events,Cart Events,cart_view,User views shopping cart,Per cart view,no,7
+2 E-Commerce Events,Cart Events,cart_abandoned,Cart exists with items >1 hour with no activity (server-side),Once per abandoned cart,yes,9
+2 E-Commerce Events,Cart Events,cart_recovered,User completes purchase from abandoned cart (server-side),Once per recovery,yes,4
+2 E-Commerce Events,Checkout Events,started_checkout,"User initiates checkout process (clicks ""Checkout"")",Once per checkout initiation,no,12
+2 E-Commerce Events,Checkout Events,checkout_step,User completes checkout step (multi-step checkout),Per step,no,7
+2 E-Commerce Events,Checkout Events,checkout_error,Validation error during checkout,Per error,no,8
+2 E-Commerce Events,Checkout Events,checkout_abandoned,User leaves checkout (server-side detection),Once per abandonment,yes,7
+2 E-Commerce Events,Checkout Events,billing_address_entered,User enters billing address,Once per checkout,no,5
+2 E-Commerce Events,Checkout Events,shipping_method_selected,User selects shipping method,Per selection,no,5
+2 E-Commerce Events,Checkout Events,payment_method_selected,User selects payment method,Per selection,no,4
+2 E-Commerce Events,Order Events,placed_order,Order confirmation after successful payment,Once per order,no,27
+2 E-Commerce Events,Order Events,order_completed,Order ships or is marked complete (server-side),Once per order,yes,6
+2 E-Commerce Events,Order Events,order_refund,Order is refunded (server-side),Per refund,yes,5
+2 E-Commerce Events,Order Events,order_return,Customer initiates return (server-side),Per return,yes,5
+2 E-Commerce Events,Order Events,repeat_purchase,Customer places second+ order (server-side),Per repeat order,yes,8
+2 E-Commerce Events,Subscription Events,subscription_start,Customer subscribes to product/service,Once per subscription,no,9
+2 E-Commerce Events,Subscription Events,subscription_cancel,Customer cancels subscription,Once per cancellation,no,7
+2 E-Commerce Events,Subscription Events,subscription_upgrade,Customer upgrades subscription plan,Per upgrade,no,8
+2 E-Commerce Events,Subscription Events,subscription_downgrade,Customer downgrades subscription plan,Per downgrade,no,6
+3 Customer Identity Events,Customer Identity Events,identify,Manual call to umerang.identify() or auto-detection from email link,Per identification,no,10
+3 Customer Identity Events,Customer Identity Events,profile_update,Customer updates profile information,Per update,no,5
+3 Customer Identity Events,Customer Identity Events,email_confirmed,Customer confirms email address,Once per email,no,3
+3 Customer Identity Events,Customer Identity Events,phone_confirmed,Customer confirms phone number,Once per phone,no,3
+3 Customer Identity Events,Customer Identity Events,account_created,Customer creates account on merchant site,Once per account,no,5
+3 Customer Identity Events,Customer Identity Events,login,Customer logs into account,Per login,no,5
+3 Customer Identity Events,Customer Identity Events,logout,Customer logs out,Per logout,no,3
+3 Customer Identity Events,Customer Identity Events,password_reset,Customer resets password,Per reset,no,4
+3 Customer Identity Events,Customer Identity Events,email_unsubscribe,Customer unsubscribes from emails,Per unsubscribe,no,4
+3 Customer Identity Events,Customer Identity Events,consent_update,Customer updates consent preferences,Per update,no,5
+4 Custom Merchant Events,Custom Merchant Events,custom_event,Any merchant-defined event via umerang.track(),Varies,no,6
